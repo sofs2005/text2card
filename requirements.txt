@@ -1,0 +1,17 @@
+# Text2Card 项目依赖库
+
+# 图像处理库
+Pillow==10.0.0
+
+# emoji 支持库
+emoji==2.8.0
+
+# 正则表达式支持
+regex==2023.10.3
+
+# 日期时间处理
+python-dateutil==2.8.2
+
+# 其他标准库依赖
+dataclasses==0.6  # Python 3.6 兼容性支持
+typing-extensions==4.8.0  # 类型注解支持
