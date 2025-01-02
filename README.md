@@ -1,123 +1,148 @@
 # 📝 Text2Card 项目说明
 
+[English](./README_EN.md) | [中文](./README.md)
+
+
 ## ✅ 前言
-Text2Card 是一个小而美的工具，能够将文本内容转换为精美的图片卡片。相比使用无头浏览器截图的方式，Text2Card 更加轻量，不依赖外部服务，直接通过函数调用生成图片，性能高效且易于集成。
+Text2Card 是一个小而美的工具，能够将文本内容转换为精美的图片卡片。相比使用无头浏览器截图的方式，Text2Card 更加轻量，不依赖外部服务，直接通过函数调用生成图片，性能高效且易于集成。现已支持 OpenAI API 格式调用，可轻松集成到各类 AI 应用中。
 
 ## 🚀 功能特性
+- **OpenAI API兼容**：支持标准 OpenAI API 格式调用，易于集成。
+- **安全认证机制**：基于 token 的图片访问控制，支持 API 密钥认证。
 - **卡片多主题配色**：支持多种渐变背景配色，卡片风格多样。
-- **Markdown解析渲染**：支持基本的Markdown语法解析，如标题、列表等。
+- **Markdown解析渲染**：支持基本的 Markdown 语法解析，如标题、列表等。
 - **日间夜间模式自动切换**：根据时间自动切换日间和夜间模式。
 - **图片标题**：支持在卡片顶部添加图片标题。
 - **支持emoji渲染展示**：能够正确渲染和展示emoji表情。
 - **超清图片保存**：生成的图片清晰度高，适合分享和展示。
-- **待完善功能**：
-  - 复杂Markdown渲染（如表格、代码块等）。
-  - 卡片高度计算有时不准确（正在优化中）。
-- **后续计划**：
-  - 兼容OpenAI API调用
+- **自动清理机制**：定期清理过期图片文件。
+
+**PS：添加WeChat：Imladrsaon 转发微信公号文章可自动summary（Url2Text还能整理好，后续发）**
+
+**<span style="color:#FF9999;">PS：添加WeChat：Imladrsaon 转发微信公号文章可自动summary（Url2Text还能整理好，后续发）</span>**
 
 ## 🖼️ 效果图片展示
 以下是使用 Text2Card 生成的图片示例：
-
 ![示例卡片](./assets/example_card.png)
-
 （注：上图展示了 Text2Card 生成的卡片效果。）
 
 ## 🛠️ 环境安装
 
 ### 1. 克隆项目
-首先，将项目克隆到本地：
-
 ```bash
 git clone https://github.com/LargeCupPanda/text2card.git
 cd text2card
 ```
 
-### 2. 安装依赖
-项目依赖Python 3.7及以上版本。建议使用虚拟环境来管理依赖。
+### 2. 环境配置
+将`env_example` 复制为 `.env` 文件，并设置必要的环境变量：
+```plaintext
+# 服务器配置
+ENV=development
+DEVELOPMENT_HOST=http://127.0.0.1:3000
+PRODUCTION_HOST=https://your-production-domain.com
+PORT=3000
 
+# 安全配置
+SECRET_KEY=your-secret-key-here
+API_KEYS=["your-test-api-key"]
+TOKEN_EXPIRY=3600
+
+# 存储配置
+UPLOAD_FOLDER=picture
+MAX_CONTENT_LENGTH=10485760
+```
+
+### 3. 安装依赖
 ```bash
-# 创建虚拟环境
+# 虚拟环境（可选）
 python3 -m venv venv
-
-# 激活虚拟环境
-# Windows
-venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
 # 安装依赖
 pip install -r requirements.txt
 ```
 
-### 3. 字体文件准备
-项目使用了自定义字体文件，确保以下字体文件存在于项目根目录中：
+### 4. 字体文件准备
+确保以下字体文件存在于项目根目录：
 - `msyh.ttc`（微软雅黑常规字体）
 - `msyhbd.ttc`（微软雅黑粗体）
 - `TwitterColorEmoji.ttf`（彩色emoji字体）
 
-如果缺少这些字体文件，可以从系统字体目录中复制，或者从合法渠道下载。
+## 📡 API 使用说明
 
-### 4. 运行示例
-项目提供了一个入口函数 `generate_image`，可以直接调用生成图片。以下是一个简单的示例：
-
+### OpenAI 格式调用
 ```python
-from image_generator import generate_image
+import requests
 
-text = """
-# 这是一个标题
-## 这是一个二级标题
-- 这是一个列表项
-- 这是另一个列表项
-"""
+def generate_card(text, api_key):
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
 
-generate_image(text, "output.png", title_image="title.png")
+# 使用示例
+result = generate_card("要转换的文本内容", "your-api-key")
+print(result)
 ```
 
-运行后，生成的图片将保存为 `output.png`。
+### 响应格式
+```json
+{
+    "id": "text2card-1234567890",
+    "object": "chat.completion",
+    "created": 1234567890,
+    "model": "Text2Card",
+    "choices": [{
+        "index": 0,
+        "message": {
+            "role": "assistant",
+            "content": "http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png"
+        },
+        "finish_reason": "stop"
+    }]
+}
+```
 
 ## 📂 项目结构
 ```
 text2card/
 ├── assets/
-│   └── example_card.png  # 效果图
-├── image_generator.py    # 图片生成主逻辑
-├── requirements.txt      # 依赖文件
+│   └── example_card.png    # 效果图
+├── image_generator.py      # 图片生成主逻辑
+├── app.py                  # API 服务器实现
+├── config.py              # 配置管理
+├── .env                   # 环境变量配置
+├── requirements.txt       # 依赖文件
 ├── msyh.ttc              # 微软雅黑常规字体
 ├── msyhbd.ttc            # 微软雅黑粗体
 ├── TwitterColorEmoji.ttf # 彩色emoji字体
 └── README.md             # 项目说明文档
 ```
 
-## 📜 使用说明
-### 1. 文本输入
-支持Markdown格式的文本输入，包括标题、列表、普通文本等。示例：
-
-```markdown
-# 这是一个标题
-## 这是一个二级标题
-- 这是一个列表项
-- 这是另一个列表项
-```
-
-### 2. 图片标题
-可以通过 `title_image` 参数指定卡片顶部的图片标题。图片会自动缩放以适应卡片宽度。
-
-### 3. 生成图片
-调用 `generate_image` 函数，传入文本、输出路径和可选标题图片路径，即可生成图片。
-
-```python
-generate_image(text, "output.png", title_image="title.png")
-```
+## 🔐 安全说明
+- API 密钥认证：所有请求需要通过 API 密钥认证
+- URL Token：图片访问使用临时 token，增强安全性
+- 文件清理：自动清理过期文件，避免存储占用
+- 环境隔离：支持开发和生产环境配置隔离
 
 ## 🤝 贡献与反馈
-如果你有任何建议或发现问题，欢迎提交Issue或Pull Request。我们非常欢迎社区的贡献！
+如果你有任何建议或发现问题，欢迎提交 Issue 或 Pull Request。我们非常欢迎社区的贡献！
 
 ## 📄 许可证
 本项目采用 MIT 许可证，详情请参阅 [LICENSE](LICENSE) 文件。
 
 ---
-
-希望这个小工具能帮助你轻松生成精美的图片卡片！如果有任何问题或建议，欢迎随时反馈。🎉
-
----
+希望这个工具能帮助你轻松生成精美的图片卡片！如有问题或建议，欢迎随时反馈。🎉

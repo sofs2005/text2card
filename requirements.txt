@@ -1,17 +1,27 @@
-# Text2Card 项目依赖库
+# Flask 相关
+Flask>=2.3.2
+Flask-CORS>=4.0.0
+Werkzeug>=2.3.7
+Jinja2>=3.1.2
+itsdangerous>=2.1.2
+click>=8.1.6
 
-# 图像处理库
-Pillow==10.0.0
+# 图像处理
+Pillow>=10.0.0
 
-# emoji 支持库
-emoji==2.8.0
+# emoji 支持
+emoji>=2.8.0
 
-# 正则表达式支持
-regex==2023.10.3
+# 正则表达式
+regex>=2023.10.3
 
 # 日期时间处理
-python-dateutil==2.8.2
+python-dateutil>=2.8.2
 
-# 其他标准库依赖
-dataclasses==0.6  # Python 3.6 兼容性支持
-typing-extensions==4.8.0  # 类型注解支持
+# 类型注解支持
+typing-extensions>=4.8.0
+
+# 其他常用库
+requests>=2.31.0
+python-dotenv>=1.0.0
+gunicorn>=20.1.0
