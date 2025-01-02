@@ -17,8 +17,6 @@ Text2Card 是一个小而美的工具，能够将文本内容转换为精美的�
 - **超清图片保存**：生成的图片清晰度高，适合分享和展示。
 - **自动清理机制**：定期清理过期图片文件。
 
-**PS：添加WeChat：Imladrsaon 转发微信公号文章可自动summary（Url2Text还能整理好，后续发）**
-
 **<span style="color:#FF9999;">PS：添加WeChat：Imladrsaon 转发微信公号文章可自动summary（Url2Text还能整理好，后续发）</span>**
 
 ## 🖼️ 效果图片展示
