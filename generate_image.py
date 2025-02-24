@@ -707,6 +707,10 @@ class TextRenderer:
             # 计算当前行高度
             line_height = line.height * line.line_count
 
+            # 签名的高度
+            if i == len(processed_lines) - 1:
+                line_height += 40
+
             # 添加行间距，但不在最后一行后添加
             if prev_line and i < len(processed_lines) - 1:
                 if prev_line.style.is_category:
