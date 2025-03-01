@@ -167,9 +167,11 @@ def chat_completions():
 
         # 提取最后一条用户消息
         last_message = None
+        title_image = None
         for msg in reversed(data['messages']):
             if msg.get('role') == 'user':
                 last_message = msg.get('content')
+                title_image = msg.get('title_image')  # 这里已经在提取 title_image 参数
                 break
 
         if not last_message:
@@ -185,7 +187,7 @@ def chat_completions():
 
         # 调用图片生成函数
         from image_generator import generate_image
-        generate_image(last_message, output_path)
+        generate_image(last_message, output_path, title_image)  # 传入title_image参数
 
         # 验证图片生成是否成功
         if not os.path.exists(output_path):
@@ -338,14 +340,14 @@ if __name__ == "__main__":
     cleanup_old_images()
 
     # 输出启动信息
-    logger.info(f"Starting Text2Card API server in {config.ENV} mode")
+    logger.info(f"Starting Text2Card API server")
     logger.info(f"Server URL: {config.base_url}")
     logger.info(f"Upload folder: {config.UPLOAD_FOLDER}")
     logger.info(f"Maximum content length: {config.MAX_CONTENT_LENGTH} bytes")
 
     # 启动服务器
     app.run(
-        debug=config.ENV == "development",
+        debug=False,
         port=config.PORT,
-        host='0.0.0.0' if config.ENV == 'production' else '127.0.0.1'
+        host='0.0.0.0'  # 默认监听所有网络接口
     )

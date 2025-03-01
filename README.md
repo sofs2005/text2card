@@ -7,6 +7,7 @@
 Text2Card 是一个小而美的工具，能够将文本内容转换为精美的图片卡片。相比使用无头浏览器截图的方式，Text2Card 更加轻量，不依赖外部服务，直接通过函数调用生成图片，性能高效且易于集成。现已支持 OpenAI API 格式调用，可轻松集成到各类 AI 应用中。
 
 ## 🚀 功能特性
+- **开箱即用**：简化配置，无需复杂设置，快速部署使用。
 - **OpenAI API兼容**：支持标准 OpenAI API 格式调用，易于集成。
 - **安全认证机制**：基于 token 的图片访问控制，支持 API 密钥认证。
 - **卡片多主题配色**：支持多种渐变背景配色，卡片风格多样。
@@ -37,19 +38,30 @@ cd text2card
 将`env_example` 复制为 `.env` 文件，并设置必要的环境变量：
 ```plaintext
 # 服务器配置
-ENV=development
-DEVELOPMENT_HOST=http://127.0.0.1:3000
-PRODUCTION_HOST=https://your-production-domain.com
-PORT=3000
+HOST=http://127.0.0.1:3000  # 服务器基础URL，例如 http://your-server-ip:3000
+PORT=3000                   # 服务器监听端口
 
 # 安全配置
-SECRET_KEY=your-secret-key-here
-API_KEYS=["your-test-api-key"]
+# 如不设置，系统会自动生成一个随机密钥
+# SECRET_KEY=your-secret-key
+
+# API密钥列表，JSON格式，例如 ["key1", "key2"]
+# 为空时，任何API密钥都无法通过验证
+API_KEYS=["your-api-key"]
+
+# 图片URL令牌过期时间（秒）
 TOKEN_EXPIRY=3600
 
 # 存储配置
-UPLOAD_FOLDER=picture
-MAX_CONTENT_LENGTH=10485760
+UPLOAD_FOLDER=picture       # 图片存储目录
+MAX_CONTENT_LENGTH=10485760 # 最大请求大小，默认10MB
+
+# 日志配置
+LOG_LEVEL=INFO              # 日志级别: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_FORMAT=%(asctime)s - %(levelname)s - %(message)s
+
+# 图片生成配置
+SIGNATURE_TEXT=—By 飞天     # 图片签名文本，会自动右对齐
 ```
 
 ### 3. 安装依赖
@@ -97,6 +109,28 @@ result = generate_card("要转换的文本内容", "your-api-key")
 print(result)
 ```
 
+### 带图片标题的调用
+```python
+def generate_card_with_image(text, image_url, api_key):
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text,
+                "title_image": image_url
+            }
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
 ### 响应格式
 ```json
 {
@@ -135,7 +169,7 @@ text2card/
 - API 密钥认证：所有请求需要通过 API 密钥认证
 - URL Token：图片访问使用临时 token，增强安全性
 - 文件清理：自动清理过期文件，避免存储占用
-- 环境隔离：支持开发和生产环境配置隔离
+- 自动密钥生成：无需手动设置密钥，系统自动生成
 
 ## 🤝 贡献与反馈
 如果你有任何建议或发现问题，欢迎提交 Issue 或 Pull Request。我们非常欢迎社区的贡献！

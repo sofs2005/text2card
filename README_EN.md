@@ -6,6 +6,7 @@
 Text2Card is an elegant tool designed to convert text content into beautiful image cards. Unlike screenshot methods using headless browsers, Text2Card is lightweight, independent of external services, and generates images directly through function calls, making it highly efficient and easy to integrate. Now with OpenAI API compatibility, it can be seamlessly integrated into various AI applications.
 
 ## 🚀 Features
+- **Ready-to-Use**: Simplified configuration, no complex setup required, quick deployment.
 - **OpenAI API Compatible**: Supports standard OpenAI API format calls for easy integration.
 - **Secure Authentication**: Token-based image access control with API key authentication.
 - **Multiple Theme Colors**: Supports various gradient background colors for diverse card styles.
@@ -33,19 +34,30 @@ cd text2card
 Create a `.env` file and set the necessary environment variables:
 ```plaintext
 # Server Configuration
-ENV=development
-DEVELOPMENT_HOST=http://127.0.0.1:3000
-PRODUCTION_HOST=https://your-production-domain.com
-PORT=3000
+HOST=http://127.0.0.1:3000  # Server base URL, e.g., http://your-server-ip:3000
+PORT=3000                   # Server listening port
 
 # Security Configuration
-SECRET_KEY=your-secret-key-here
-API_KEYS=["your-test-api-key"]
+# If not set, the system will automatically generate a random key
+# SECRET_KEY=your-secret-key
+
+# API keys list in JSON format, e.g., ["key1", "key2"]
+# When empty, no API key will pass validation
+API_KEYS=["your-api-key"]
+
+# Image URL token expiry time (seconds)
 TOKEN_EXPIRY=3600
 
 # Storage Configuration
-UPLOAD_FOLDER=picture
-MAX_CONTENT_LENGTH=10485760
+UPLOAD_FOLDER=picture       # Image storage directory
+MAX_CONTENT_LENGTH=10485760 # Maximum request size, default 10MB
+
+# Logging Configuration
+LOG_LEVEL=INFO              # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_FORMAT=%(asctime)s - %(levelname)s - %(message)s
+
+# Image Generation Configuration
+SIGNATURE_TEXT=—By 飞天     # Image signature text, will be automatically right-aligned
 ```
 
 ### 3. Install Dependencies
@@ -90,6 +102,28 @@ result = generate_card("Text to convert", "your-api-key")
 print(result)
 ```
 
+### Call with Image Title
+```python
+def generate_card_with_image(text, image_url, api_key):
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text,
+                "title_image": image_url
+            }
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
 ### Response Format
 ```json
 {
@@ -128,7 +162,7 @@ text2card/
 - API Key Authentication: All requests require API key authentication
 - URL Token: Image access uses temporary tokens for enhanced security
 - File Cleanup: Automatically cleans expired files to prevent storage buildup
-- Environment Isolation: Supports separate development and production configurations
+- Automatic Key Generation: No need to manually set security keys, system generates them automatically
 
 ## 🤝 Contributing
 If you have any suggestions or discover issues, please feel free to submit an Issue or Pull Request. Community contributions are highly welcome!

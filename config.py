@@ -27,14 +27,12 @@ class Config:
 
     def __init__(self):
         """初始化配置，加载和验证所有必需的配置值"""
-        # 环境配置
-        self.ENV: str = self._get_env('ENV', 'development')
-        self.DEVELOPMENT_HOST: str = self._get_env('DEVELOPMENT_HOST', 'http://127.0.0.1:3000')
-        self.PRODUCTION_HOST: str = self._get_env('PRODUCTION_HOST')
+        # 服务器配置
+        self.HOST: str = self._get_env('HOST', 'http://127.0.0.1:3000')
         self.PORT: int = int(self._get_env('PORT', '3000'))
 
         # 安全配置
-        self.SECRET_KEY: str = self._get_env('SECRET_KEY')
+        self.SECRET_KEY: str = self._get_env('SECRET_KEY', self._generate_default_secret())
         self.API_KEYS: List[str] = self._parse_json_env('API_KEYS', '[]')
         self.TOKEN_EXPIRY: int = int(self._get_env('TOKEN_EXPIRY', '3600'))
 
@@ -46,12 +44,21 @@ class Config:
         self.LOG_LEVEL: str = self._get_env('LOG_LEVEL', 'INFO')
         self.LOG_FORMAT: str = self._get_env('LOG_FORMAT',
                                            '%(asctime)s - %(levelname)s - %(message)s')
-
-        # 验证配置
-        self._validate_configuration()
+        
+        # 图片生成配置
+        self.SIGNATURE_TEXT: str = self._get_env('SIGNATURE_TEXT', '                                         —By 飞天')
 
         # 确保上传目录存在
         self._ensure_upload_folder()
+
+    def _generate_default_secret(self) -> str:
+        """
+        生成默认的密钥（用于开发环境或首次运行）
+        
+        Returns:
+            str: 生成的密钥
+        """
+        return hashlib.sha256(os.urandom(32)).hexdigest()
 
     def _get_env(self, key: str, default: Optional[str] = None) -> str:
         """
@@ -84,25 +91,11 @@ class Config:
             List[str]: 解析后的列表
         """
         try:
-            return json.loads(self._get_env(key, default))
+            raw_value = self._get_env(key, default)
+            result = json.loads(raw_value)
+            return result
         except json.JSONDecodeError as e:
             raise ConfigurationError(f"环境变量 {key} JSON解析错误: {str(e)}")
-
-    def _validate_configuration(self):
-        """
-        验证配置的有效性
-
-        Raises:
-            ConfigurationError: 当配置无效时
-        """
-        if not self.SECRET_KEY:
-            raise ConfigurationError("SECRET_KEY 不能为空")
-
-        if self.ENV not in ['development', 'production']:
-            raise ConfigurationError("ENV 必须是 'development' 或 'production'")
-
-        if self.ENV == 'production' and not self.PRODUCTION_HOST:
-            raise ConfigurationError("生产环境需要设置 PRODUCTION_HOST")
 
     def _ensure_upload_folder(self):
         """确保上传目录存在"""
@@ -111,12 +104,12 @@ class Config:
     @property
     def base_url(self) -> str:
         """
-        获取当前环境的基础URL
+        获取基础URL
 
         Returns:
             str: 完整的基础URL
         """
-        return self.DEVELOPMENT_HOST if self.ENV == 'development' else self.PRODUCTION_HOST
+        return self.HOST
 
     def generate_image_token(self, filename: str) -> tuple:
         """
