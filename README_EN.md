@@ -5,6 +5,9 @@
 ## ✅ Introduction
 Text2Card is an elegant tool designed to convert text content into beautiful image cards. Unlike screenshot methods using headless browsers, Text2Card is lightweight, independent of external services, and generates images directly through function calls, making it highly efficient and easy to integrate. Now with OpenAI API compatibility, it can be seamlessly integrated into various AI applications.
 
+## 🙏 Acknowledgment
+This project is a modified version based on [@LargeCupPanda/Text2Card](https://github.com/LargeCupPanda/Text2Card). We express our sincere gratitude to the original author for their open-source contribution!
+
 ## 🚀 Features
 - **Ready-to-Use**: Simplified configuration, no complex setup required, quick deployment.
 - **OpenAI API Compatible**: Supports standard OpenAI API format calls for easy integration.
@@ -26,7 +29,7 @@ Here's an example of an image generated using Text2Card:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/LargeCupPanda/text2card.git
+git clone https://github.com/sofs2005/text2card.git
 cd text2card
 ```
 
