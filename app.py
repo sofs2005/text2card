@@ -22,7 +22,7 @@ API 端点：
         }'
 """
 
-from flask import Flask, request, jsonify, send_file, make_response
+from flask import Flask, request, jsonify, send_file, make_response, Response
 from flask_cors import CORS
 from functools import wraps
 import os
@@ -31,6 +31,8 @@ import uuid
 import time
 import logging
 from typing import Optional, Dict, Any, Tuple
+import re
+import json
 
 # 导入配置
 from config import config
@@ -171,7 +173,7 @@ def chat_completions():
         for msg in reversed(data['messages']):
             if msg.get('role') == 'user':
                 last_message = msg.get('content')
-                title_image = msg.get('title_image')  # 这里已经在提取 title_image 参数
+                title_image = msg.get('title_image')  # 提取title_image参数
                 break
 
         if not last_message:
@@ -180,7 +182,24 @@ def chat_completions():
                 'invalid_request_error',
                 400
             ))
-
+        
+        # 检查文本内容开头是否为图片URL
+        url_pattern = r'^(https?://\S+\.(jpg|jpeg|png|gif|webp))(.*)$'
+        match = re.match(url_pattern, last_message, re.IGNORECASE | re.DOTALL)
+        
+        if match and not title_image:
+            # 如果消息内容以图片URL开头且没有设置title_image，则将其作为logo
+            logo_url = match.group(1)
+            remaining_text = match.group(3).strip()
+            
+            # 如果剩余内容为空，使用默认文本
+            if not remaining_text:
+                remaining_text = "图片卡片"
+                
+            # 更新参数
+            title_image = logo_url
+            last_message = remaining_text
+        
         # 生成图片
         output_filename = generate_unique_filename()
         output_path = os.path.join(config.UPLOAD_FOLDER, output_filename)
@@ -202,29 +221,128 @@ def chat_completions():
         token, expiry = config.generate_image_token(output_filename)
         image_url = f"{config.base_url}/v1/images/{output_filename}?token={token}&expiry={expiry}"
 
-        # 构造OpenAI格式的响应
-        response = {
-            'id': f'text2card-{int(time.time())}',
-            'object': 'chat.completion',
-            'created': int(time.time()),
-            'model': 'Text2Card',
-            'choices': [{
-                'index': 0,
-                'message': {
-                    'role': 'assistant',
-                    'content': image_url
-                },
-                'finish_reason': 'stop'
-            }],
-            'usage': {
-                'prompt_tokens': len(last_message),
-                'completion_tokens': 0,
-                'total_tokens': len(last_message)
-            }
-        }
+        # 将URL转换为Markdown格式
+        markdown_image_url = f"![图片卡片]({image_url})"
 
+        # 检查客户端对响应格式的需求 - 标准OpenAI参数
+        response_format = data.get('response_format', {}).get('type', 'text')
+        
+        # 选择响应内容 - 根据标准OpenAI格式
+        # 在流式模式中，由于大多数客户端已经处理流式内容，我们保持简单文本返回
+        # 但我们会支持response_format参数
+        if response_format == 'json_object':
+            # 如果客户端要求JSON响应，我们返回一个包含URL的JSON结构
+            content = json.dumps({"url": image_url, "markdown": markdown_image_url})
+        else:
+            # 默认使用Markdown格式，这在大多数支持OpenAI的客户端中都能正常工作
+            content = markdown_image_url
+
+        # 记录详细的日志
         logger.info(f"Successfully generated image: {output_filename}")
-        return jsonify(response)
+        logger.info(f"Image URL: {image_url}")
+        logger.info(f"Response format: {response_format}")
+        logger.info(f"Content being returned: {content}")
+
+        # 检查是否请求了流式响应 - 标准OpenAI参数
+        stream = data.get('stream', False)
+        logger.info(f"Stream mode requested: {stream}")
+
+        if stream:
+            # 返回流式响应 - 遵循OpenAI标准
+            def generate():
+                # 首先发送角色
+                chunk = {
+                    "id": f"text2card-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": "Text2Card",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant"
+                        },
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                
+                # 然后发送内容
+                chunk = {
+                    "id": f"text2card-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": "Text2Card",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "content": content
+                        },
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                
+                # 然后发送一个完成标记
+                chunk = {
+                    "id": f"text2card-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": "Text2Card",
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                }
+                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                
+                # 最后发送 [DONE] 标记
+                yield "data: [DONE]\n\n"
+            
+            logger.info("Returning streaming response")
+            return Response(
+                generate(),
+                status=200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "X-Accel-Buffering": "no"  # 禁用Nginx缓冲
+                }
+            )
+        else:
+            # 构造OpenAI格式的响应 - 完整标准格式
+            response = {
+                'id': f'text2card-{int(time.time())}',
+                'object': 'chat.completion',
+                'created': int(time.time()),
+                'model': 'Text2Card',
+                'choices': [{
+                    'index': 0,
+                    'message': {
+                        'role': 'assistant',
+                        'content': content
+                    },
+                    'finish_reason': 'stop'
+                }],
+                'usage': {
+                    'prompt_tokens': len(last_message),
+                    'completion_tokens': len(str(content)),
+                    'total_tokens': len(last_message) + len(str(content))
+                }
+            }
+
+            logger.info(f"Full response: {json.dumps(response, ensure_ascii=False)}")
+
+            # 直接使用Flask的Response构造响应
+            return Response(
+                json.dumps(response, ensure_ascii=False),
+                status=200,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8"
+                }
+            )
 
     except Exception as e:
         logger.error(f"Error in chat_completions: {str(e)}", exc_info=True)

@@ -12,6 +12,8 @@ Text2Card 是一个小而美的工具，能够将文本内容转换为精美的�
 ## 🚀 功能特性
 - **开箱即用**：简化配置，无需复杂设置，快速部署使用。
 - **OpenAI API兼容**：支持标准 OpenAI API 格式调用，易于集成。
+- **流式响应支持**：支持OpenAI的流式响应(streaming)，适配更多LLM客户端。
+- **自动图片检测**：自动识别URL格式内容作为标题图片，简化调用流程。
 - **安全认证机制**：基于 token 的图片访问控制，支持 API 密钥认证。
 - **卡片多主题配色**：支持多种渐变背景配色，卡片风格多样。
 - **Markdown解析渲染**：支持基本的 Markdown 语法解析，如标题、列表等。
@@ -112,6 +114,90 @@ result = generate_card("要转换的文本内容", "your-api-key")
 print(result)
 ```
 
+### 使用流式响应（Streaming）
+```python
+import requests
+import json
+
+def generate_card_streaming(text, api_key):
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "stream": True  # 启用流式响应
+    }
+    
+    response = requests.post(url, headers=headers, json=data, stream=True)
+    
+    for line in response.iter_lines():
+        if line:
+            line = line.decode('utf-8')
+            if line.startswith('data: ') and not line.endswith('[DONE]'):
+                chunk = json.loads(line[6:])  # 去掉 "data: " 前缀
+                if 'choices' in chunk and chunk['choices']:
+                    delta = chunk['choices'][0].get('delta', {})
+                    if 'content' in delta:
+                        # 处理内容片段
+                        print(f"收到内容: {delta['content']}")
+```
+
+### 直接在内容中添加图片URL
+```python
+def generate_card_with_url_content(api_key):
+    """直接在内容中添加图片URL，系统会自动识别为标题图片"""
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    # 在内容开头添加图片URL，系统会自动识别
+    content = "https://example.com/image.jpg\n这是卡片的正文内容"
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user", 
+                "content": content
+            }
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
+### 设置响应格式
+
+```python
+def generate_card_with_format(text, api_key, format_type="text"):
+    """指定响应格式，可选值为 text 或 json_object"""
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "response_format": {"type": format_type}
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
 ### 带图片标题的调用
 ```python
 def generate_card_with_image(text, image_url, api_key):
@@ -135,6 +221,7 @@ def generate_card_with_image(text, image_url, api_key):
 ```
 
 ### 响应格式
+#### 普通响应
 ```json
 {
     "id": "text2card-1234567890",
@@ -145,11 +232,27 @@ def generate_card_with_image(text, image_url, api_key):
         "index": 0,
         "message": {
             "role": "assistant",
-            "content": "http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png"
+            "content": "![图片卡片](http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png?token=abc123&expiry=1234567890)"
         },
         "finish_reason": "stop"
-    }]
+    }],
+    "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30
+    }
 }
+```
+
+#### 流式响应片段
+```json
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{"content":"![图片卡片](http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png?token=abc123&expiry=1234567890)"},"finish_reason":null}]}
+
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
 ```
 
 ## 📂 项目结构

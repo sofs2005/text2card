@@ -11,6 +11,8 @@ This project is a modified version based on [@LargeCupPanda/Text2Card](https://g
 ## 🚀 Features
 - **Ready-to-Use**: Simplified configuration, no complex setup required, quick deployment.
 - **OpenAI API Compatible**: Supports standard OpenAI API format calls for easy integration.
+- **Streaming Support**: Compatible with OpenAI streaming responses for better LLM client compatibility.
+- **Auto Image Detection**: Automatically detects URL format content as title images, simplifying API calls.
 - **Secure Authentication**: Token-based image access control with API key authentication.
 - **Multiple Theme Colors**: Supports various gradient background colors for diverse card styles.
 - **Markdown Parsing**: Supports basic Markdown syntax parsing, including headers and lists.
@@ -105,6 +107,89 @@ result = generate_card("Text to convert", "your-api-key")
 print(result)
 ```
 
+### Using Streaming Responses
+```python
+import requests
+import json
+
+def generate_card_streaming(text, api_key):
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "stream": True  # Enable streaming responses
+    }
+    
+    response = requests.post(url, headers=headers, json=data, stream=True)
+    
+    for line in response.iter_lines():
+        if line:
+            line = line.decode('utf-8')
+            if line.startswith('data: ') and not line.endswith('[DONE]'):
+                chunk = json.loads(line[6:])  # Remove "data: " prefix
+                if 'choices' in chunk and chunk['choices']:
+                    delta = chunk['choices'][0].get('delta', {})
+                    if 'content' in delta:
+                        # Process content chunk
+                        print(f"Received content: {delta['content']}")
+```
+
+### Using Image URL in Content
+```python
+def generate_card_with_url_content(api_key):
+    """Directly add an image URL in the content, which will be automatically detected as a title image"""
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    # Add image URL at the beginning of content for automatic detection
+    content = "https://example.com/image.jpg\nThis is the card's main content"
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user", 
+                "content": content
+            }
+        ]
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
+### Setting Response Format
+```python
+def generate_card_with_format(text, api_key, format_type="text"):
+    """Specify response format, options are 'text' or 'json_object'"""
+    url = "http://127.0.0.1:3000/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "Text2Card",
+        "messages": [
+            {
+                "role": "user",
+                "content": text
+            }
+        ],
+        "response_format": {"type": format_type}
+    }
+    response = requests.post(url, headers=headers, json=data)
+    return response.json()
+```
+
 ### Call with Image Title
 ```python
 def generate_card_with_image(text, image_url, api_key):
@@ -128,6 +213,7 @@ def generate_card_with_image(text, image_url, api_key):
 ```
 
 ### Response Format
+#### Standard Response
 ```json
 {
     "id": "text2card-1234567890",
@@ -138,14 +224,30 @@ def generate_card_with_image(text, image_url, api_key):
         "index": 0,
         "message": {
             "role": "assistant",
-            "content": "http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png"
+            "content": "![Image Card](http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png?token=abc123&expiry=1234567890)"
         },
         "finish_reason": "stop"
-    }]
+    }],
+    "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 20,
+        "total_tokens": 30
+    }
 }
 ```
 
-## 📂 Project Structure
+#### Streaming Response Example
+```json
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{"content":"![Image Card](http://127.0.0.1:3000/v1/images/20250102123456_abcdef.png?token=abc123&expiry=1234567890)"},"finish_reason":null}]}
+
+data: {"id":"text2card-1234567890","object":"chat.completion.chunk","created":1234567890,"model":"Text2Card","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+## �� Project Structure
 ```
 text2card/
 ├── assets/
