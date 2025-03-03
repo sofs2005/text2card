@@ -33,6 +33,12 @@ import logging
 from typing import Optional, Dict, Any, Tuple
 import re
 import json
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
+from werkzeug.middleware.proxy_fix import ProxyFix
+import gc
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 # 导入配置
 from config import config
@@ -41,10 +47,8 @@ from config import config
 config.setup_logging()
 logger = logging.getLogger(__name__)
 
-# 初始化Flask应用
-app = Flask(__name__)
-CORS(app)  # 启用跨域支持
-app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+# 初始化调度器
+scheduler = BackgroundScheduler()
 
 def generate_unique_filename() -> str:
     """
@@ -141,8 +145,61 @@ def validate_chat_request(data: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any]
 
     return None
 
+def cleanup_old_images():
+    """
+    清理过期的图片文件
+    """
+    try:
+        current_time = time.time()
+        cleanup_count = 0
+        for filename in os.listdir(config.UPLOAD_FOLDER):
+            try:
+                file_path = os.path.join(config.UPLOAD_FOLDER, filename)
+                # 如果文件超过24小时未被访问
+                if os.path.exists(file_path) and \
+                   current_time - os.path.getmtime(file_path) > 86400:
+                    os.remove(file_path)
+                    cleanup_count += 1
+                    if cleanup_count % 100 == 0:  # 每清理100个文件记录一次日志
+                        logger.info(f"Cleaned up {cleanup_count} old images")
+            except Exception as e:
+                logger.error(f"Error cleaning up image {filename}: {str(e)}")
+                continue
+        if cleanup_count > 0:
+            logger.info(f"Cleanup completed: removed {cleanup_count} old images")
+        gc.collect()  # 手动触发垃圾回收
+    except Exception as e:
+        logger.error(f"Error in cleanup_old_images: {str(e)}")
+
+# 配置定时任务
+scheduler.add_job(func=cleanup_old_images, trigger="interval", hours=1)
+scheduler.start()
+
+# 确保在应用退出时关闭调度器
+atexit.register(lambda: scheduler.shutdown())
+
+# 初始化Flask应用
+app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app)  # 修复代理问题
+CORS(app)  # 启用跨域支持
+app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+
+# 添加请求限制
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+@app.after_request
+def after_request(response):
+    """请求完成后的清理工作"""
+    gc.collect()  # 手动触发垃圾回收
+    return response
+
 @app.route('/v1/chat/completions', methods=['POST'])
 @require_api_key
+@limiter.limit("10 per minute")  # 添加速率限制
 def chat_completions():
     """
     OpenAI兼容的聊天补全API端点
@@ -160,8 +217,16 @@ def chat_completions():
         JSON响应: 包含生成的图片URL或错误信息
     """
     try:
+        # 限制请求体大小
+        if request.content_length and request.content_length > config.MAX_CONTENT_LENGTH:
+            return jsonify(create_error_response(
+                '请求数据过大',
+                'payload_too_large',
+                413
+            ))
+            
         data = request.json
-
+        
         # 验证请求数据
         validation_error = validate_chat_request(data)
         if validation_error:
@@ -248,58 +313,63 @@ def chat_completions():
         logger.info(f"Stream mode requested: {stream}")
 
         if stream:
-            # 返回流式响应 - 遵循OpenAI标准
             def generate():
-                # 首先发送角色
-                chunk = {
-                    "id": f"text2card-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "Text2Card",
-                    "choices": [{
-                        "index": 0,
-                        "delta": {
-                            "role": "assistant"
-                        },
-                        "finish_reason": None
-                    }]
-                }
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                
-                # 然后发送内容
-                chunk = {
-                    "id": f"text2card-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "Text2Card",
-                    "choices": [{
-                        "index": 0,
-                        "delta": {
-                            "content": content
-                        },
-                        "finish_reason": None
-                    }]
-                }
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                
-                # 然后发送一个完成标记
-                chunk = {
-                    "id": f"text2card-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "Text2Card",
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }]
-                }
-                yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
-                
-                # 最后发送 [DONE] 标记
-                yield "data: [DONE]\n\n"
+                try:
+                    # 首先发送角色
+                    chunk = {
+                        "id": f"text2card-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": "Text2Card",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant"
+                            },
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    
+                    # 然后发送内容
+                    chunk = {
+                        "id": f"text2card-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": "Text2Card",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {
+                                "content": content
+                            },
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    
+                    # 然后发送一个完成标记
+                    chunk = {
+                        "id": f"text2card-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": "Text2Card",
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop"
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    
+                    # 最后发送 [DONE] 标记
+                    yield "data: [DONE]\n\n"
+                except GeneratorExit:
+                    # 处理客户端断开连接
+                    logger.info("Client disconnected from stream")
+                finally:
+                    # 清理资源
+                    gc.collect()
             
-            logger.info("Returning streaming response")
             return Response(
                 generate(),
                 status=200,
@@ -436,22 +506,6 @@ def internal_server_error(error):
         'server_error',
         500
     ))
-
-def cleanup_old_images():
-    """
-    清理过期的图片文件
-    """
-    try:
-        current_time = time.time()
-        for filename in os.listdir(config.UPLOAD_FOLDER):
-            file_path = os.path.join(config.UPLOAD_FOLDER, filename)
-            # 如果文件超过24小时未被访问
-            if os.path.exists(file_path) and \
-               current_time - os.path.getmtime(file_path) > 86400:
-                os.remove(file_path)
-                logger.info(f"Cleaned up old image: {filename}")
-    except Exception as e:
-        logger.error(f"Error cleaning up old images: {str(e)}")
 
 if __name__ == "__main__":
     # 启动前清理旧文件

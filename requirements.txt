@@ -25,3 +25,7 @@ typing-extensions>=4.8.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 gunicorn>=20.1.0
+
+# 新增依赖
+flask-limiter
+apscheduler
