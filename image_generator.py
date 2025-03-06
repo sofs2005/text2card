@@ -16,6 +16,8 @@ import requests
 from io import BytesIO
 import time
 from PIL import UnidentifiedImageError
+import json
+import html
 
 # 导入配置
 try:
@@ -37,6 +39,11 @@ class TextStyle:
     is_title: bool = False  # 是否为标题
     is_category: bool = False  # 是否为分类标题
     keep_with_next: bool = False  # 是否与下一行保持在一起
+    is_code: bool = False  # 是否为代码样式
+    is_quote: bool = False  # 是否为引用样式
+    alignment: str = 'left'  # 对齐方式
+    is_dark_theme: bool = False  # 是否为深色主题
+    is_list_item: bool = False  # 是否为列表项
 
 
 @dataclass
@@ -280,18 +287,33 @@ def round_corner_image(image: Image.Image, radius: int) -> Image.Image:
 
 
 def add_title_image(background: Image.Image, title_image_path: str, rect_x: int, rect_y: int, rect_width: int) -> int:
-    """添加标题图片"""
+    """添加标题图片
+    
+    Args:
+        background: 背景图片
+        title_image_path: 图片路径或URL
+        rect_x: 矩形x坐标
+        rect_y: 矩形y坐标
+        rect_width: 矩形宽度
+        
+    Returns:
+        int: 图片底部位置加上间距
+    """
     try:
         # 判断是否为URL
         if title_image_path.startswith(('http://', 'https://')):
-            # 从URL下载图像
-            title_img = download_image_with_timeout(title_image_path)
+            # 从URL下载图像，增加超时时间和重试次数
+            title_img = download_image_with_timeout(title_image_path, timeout=15, max_retries=5)
             if title_img is None:
                 print(f"无法加载标题图像: {title_image_path}")
                 return rect_y + 30
         else:
             # 从本地文件加载
-            title_img = Image.open(title_image_path)
+            try:
+                title_img = Image.open(title_image_path)
+            except (FileNotFoundError, IOError) as e:
+                print(f"无法加载本地图像: {e}")
+                return rect_y + 30
         
         # 如果图片不是RGBA模式，转换为RGBA
         if title_img.mode != 'RGBA':
@@ -303,6 +325,12 @@ def add_title_image(background: Image.Image, title_image_path: str, rect_x: int,
         # 计算等比例缩放后的高度
         aspect_ratio = title_img.height / title_img.width
         target_height = int(target_width * aspect_ratio)
+        
+        # 限制最大高度（不超过卡片宽度的一半）
+        max_height = rect_width // 2
+        if target_height > max_height:
+            target_height = max_height
+            target_width = int(max_height / aspect_ratio)
 
         # 调整图片大小
         resized_img = title_img.resize((int(target_width), target_height), Image.Resampling.LANCZOS)
@@ -310,8 +338,8 @@ def add_title_image(background: Image.Image, title_image_path: str, rect_x: int,
         # 添加圆角
         rounded_img = round_corner_image(resized_img, radius=20)  # 可以调整圆角半径
 
-        # 计算居中位置（水平方向）
-        x = rect_x + 20  # 左边距20像素
+        # 计算居中位置
+        x = rect_x + (rect_width - target_width) // 2  # 水平居中
         y = rect_y + 20  # 顶部边距20像素
 
         # 粘贴图片（使用图片自身的alpha通道）
@@ -328,53 +356,147 @@ class MarkdownParser:
 
     def __init__(self):
         self.reset()
+        # 编译常用的正则表达式
+        self.bold_pattern = re.compile(r'\*\*(.+?)\*\*')
+        self.italic_pattern = re.compile(r'\*(.+?)\*|_(.+?)_')
+        self.code_pattern = re.compile(r'`(.+?)`')
+        self.link_pattern = re.compile(r'\[(.+?)\]\((.+?)\)')
+        self.strikethrough_pattern = re.compile(r'~~(.+?)~~')
+        # 添加匹配星号标记的正则表达式
+        self.list_star_pattern = re.compile(r'^\* (.+)$')
+        self.header_pattern = re.compile(r'^(\*+) (.+?)(\*+)$')
 
     def reset(self):
         self.segments = []
         self.current_section = None  # 当前处理的段落类型
+        self.in_code_block = False   # 是否在代码块内
+        self.in_quote_block = False  # 是否在引用块内
+        self.quote_indent = 0        # 引用块缩进级别
 
     def parse(self, text: str) -> List[TextSegment]:
         """解析整个文本"""
         self.reset()
         segments = []
         lines = text.splitlines()
-
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                # 只有当下一行有内容时才添加空行
-                next_has_content = False
-                for next_line in lines[i + 1:]:
-                    if next_line.strip():
-                        next_has_content = True
-                        break
-                if next_has_content:
-                    style = TextStyle(
-                        line_spacing=20 if segments and segments[-1].style.is_title else 15
-                    )
-                    segments.append(TextSegment(text='', style=style))
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].rstrip()
+            
+            # 处理代码块
+            if line.startswith('```'):
+                if not self.in_code_block:
+                    # 开始代码块
+                    self.in_code_block = True
+                    code_lang = line[3:].strip()
+                    code_content = []
+                    i += 1
+                    while i < len(lines) and not lines[i].startswith('```'):
+                        code_content.append(lines[i])
+                        i += 1
+                    
+                    if i < len(lines):  # 找到了结束标记
+                        code_text = '\n'.join(code_content)
+                        style = TextStyle(
+                            font_name='regular',
+                            indent=40,
+                            line_spacing=10,
+                            is_code=True  # 标记为代码样式
+                        )
+                        segments.append(TextSegment(
+                            text=code_text,
+                            style=style,
+                            original_text=f"```{code_lang}\n{code_text}\n```"
+                        ))
+                        self.in_code_block = False
+                    else:
+                        # 没找到结束标记，作为普通文本处理
+                        style = TextStyle(font_name='regular', indent=0)
+                        segments.append(TextSegment(text=line, style=style))
+                else:
+                    # 结束代码块
+                    self.in_code_block = False
+                i += 1
                 continue
-
-            # 处理常规行
-            line_segments = self.parse_line(line)
-            segments.extend(line_segments)
-
-            # 只在确定有下一行内容时添加空行
-            if i < len(lines) - 1:
-                has_next_content = False
-                for next_line in lines[i + 1:]:
-                    if next_line.strip():
-                        has_next_content = True
-                        break
-                if has_next_content:
-                    style = line_segments[-1].style
-                    segments.append(TextSegment(text='', style=TextStyle(line_spacing=style.line_spacing)))
+                
+            # 处理引用块
+            if line.startswith('> '):
+                quote_level = 0
+                while line.startswith('> '):
+                    quote_level += 1
+                    line = line[2:]
+                
+                self.in_quote_block = True
+                self.quote_indent = quote_level * 20
+                
+                # 处理引用块内部的文本
+                quote_style = TextStyle(
+                    font_name='regular',
+                    indent=40 + self.quote_indent,
+                    line_spacing=15,
+                    is_quote=True  # 标记为引用样式
+                )
+                
+                # 应用引用内部的Markdown格式
+                processed_line = self.process_inline_formats(line.strip())
+                segments.append(TextSegment(
+                    text=processed_line,
+                    style=quote_style,
+                    original_text=lines[i]
+                ))
+            else:
+                # 重置引用块状态
+                if self.in_quote_block:
+                    self.in_quote_block = False
+                    self.quote_indent = 0
+                
+                # 空行处理
+                if not line:
+                    # 只有当下一行有内容时才添加空行
+                    next_has_content = False
+                    for next_line in lines[i + 1:]:
+                        if next_line.strip():
+                            next_has_content = True
+                            break
+                    if next_has_content:
+                        style = TextStyle(
+                            line_spacing=20 if segments and segments[-1].style.is_title else 15
+                        )
+                        segments.append(TextSegment(text='', style=style))
+                else:
+                    # 处理常规行
+                    line_segments = self.parse_line(line)
+                    segments.extend(line_segments)
+                
+                    # 只在确定有下一行内容时添加空行
+                    if i < len(lines) - 1:
+                        has_next_content = False
+                        for next_line in lines[i + 1:]:
+                            if next_line.strip():
+                                has_next_content = True
+                                break
+                        if has_next_content:
+                            style = line_segments[-1].style
+                            segments.append(TextSegment(text='', style=TextStyle(line_spacing=style.line_spacing)))
+            
+            i += 1
 
         # 最后添加签名，不添加任何额外空行
         if segments:
+            try:
+                from config import config
+                signature_text = config.SIGNATURE_TEXT
+            except (ImportError, AttributeError):
+                signature_text = "—By 飞天"
+                
             signature = TextSegment(
-                text=config.SIGNATURE_TEXT,
-                style=TextStyle(font_name='regular', indent=0, line_spacing=0)  # 设置 line_spacing=0
+                text=signature_text,
+                style=TextStyle(
+                    font_name='regular', 
+                    indent=0, 
+                    line_spacing=0,
+                    alignment='right'  # 添加右对齐属性
+                )
             )
             segments.append(signature)
 
@@ -384,13 +506,41 @@ class MarkdownParser:
         """判断是否为分类标题"""
         return text.strip() in ['国内要闻', '国际动态']
 
+    def process_inline_formats(self, text: str) -> str:
+        """处理行内Markdown格式"""
+        # 完全替换所有Markdown格式标记，不保留原始标记
+        
+        # 处理标题格式 *一、标题*
+        header_match = self.header_pattern.match(text)
+        if header_match:
+            return header_match.group(2)  # 只保留标题内容
+            
+        # 处理列表项标记 * 列表项
+        list_match = self.list_star_pattern.match(text)
+        if list_match:
+            return "• " + list_match.group(1)  # 将星号替换为实际的圆点符号
+        
+        # 处理链接 [text](url)
+        text = self.link_pattern.sub(r'\1', text)
+        
+        # 处理加粗 **text**
+        text = self.bold_pattern.sub(r'\1', text)
+        
+        # 处理斜体 *text* 或 _text_
+        text = self.italic_pattern.sub(lambda m: m.group(1) or m.group(2), text)
+        
+        # 处理行内代码 `code`
+        text = self.code_pattern.sub(r'\1', text)
+        
+        # 处理删除线 ~~text~~
+        text = self.strikethrough_pattern.sub(r'\1', text)
+        
+        return text
+
     def process_title_marks(self, text: str) -> str:
         """处理标题标记"""
-        # 移除 ** 标记
-        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-        # 统一中文冒号
-        text = text.replace(':', '：')
-        return text
+        # 应用所有行内格式处理
+        return self.process_inline_formats(text)
 
     def split_number_and_content(self, text: str) -> Tuple[str, str]:
         """分离序号和内容"""
@@ -411,6 +561,29 @@ class MarkdownParser:
         if not text.strip():
             return [TextSegment(text='', style=TextStyle())]
 
+        # 检查是否匹配标题模式: *标题* 或 **标题**
+        header_match = re.match(r'^\*+\s*(.+?)\s*\*+$', text)
+        if header_match:
+            title_text = header_match.group(1)
+            # 根据星号数量或前缀确定标题级别
+            if title_text.startswith("一、") or title_text.startswith("二、") or title_text.startswith("三、") or title_text.startswith("四、"):
+                style = TextStyle(
+                    font_name='bold',
+                    font_size=38,  # 加大字号
+                    is_title=True,
+                    line_spacing=25,
+                    indent=0
+                )
+            else:
+                style = TextStyle(
+                    font_name='bold',
+                    font_size=35,
+                    is_title=True,
+                    line_spacing=20,
+                    indent=0
+                )
+            return [TextSegment(text=title_text, style=style)]
+
         # 处理一级标题
         if text.startswith('# '):
             style = TextStyle(
@@ -419,7 +592,7 @@ class MarkdownParser:
                 is_title=True,
                 indent=0
             )
-            return [TextSegment(text=text[2:].strip(), style=style)]
+            return [TextSegment(text=self.process_inline_formats(text[2:].strip()), style=style)]
 
         # 处理二级标题
         if text.startswith('## '):
@@ -430,8 +603,19 @@ class MarkdownParser:
                 line_spacing=25,
                 indent=0
             )
-            self.current_section = text[3:].strip()
+            self.current_section = self.process_inline_formats(text[3:].strip())
             return [TextSegment(text=self.current_section, style=style)]
+
+        # 处理三级标题
+        if text.startswith('### '):
+            style = TextStyle(
+                font_name='bold',
+                font_size=32,
+                is_title=True,
+                line_spacing=20,
+                indent=0
+            )
+            return [TextSegment(text=self.process_inline_formats(text[4:].strip()), style=style)]
 
         # 处理分类标题
         if self.is_category_title(text):
@@ -448,8 +632,7 @@ class MarkdownParser:
         if text.strip() and emoji.is_emoji(text[0]):
             # 移除文本中的加粗标记 **
             content = text.strip()
-            if '**' in content:
-                content = content.replace('**', '')
+            content = self.process_inline_formats(content)
 
             style = TextStyle(
                 font_name='bold',
@@ -459,6 +642,20 @@ class MarkdownParser:
                 indent=0
             )
             return [TextSegment(text=content, style=style)]
+
+        # 增强处理无序列表项
+        list_match = re.match(r'^(\*|\-|\+)\s+(.+)$', text)
+        if list_match:
+            marker = "•"  # 使用实际的圆点符号
+            list_content = list_match.group(2).strip()
+            list_content = self.process_inline_formats(list_content)
+            
+            style = TextStyle(
+                font_name='regular',
+                indent=40,
+                line_spacing=15
+            )
+            return [TextSegment(text=f"{marker} {list_content}", style=style)]
 
         # 处理带序号的新闻条目
         number, content = self.split_number_and_content(text)
@@ -497,16 +694,16 @@ class MarkdownParser:
                 indent=40,
                 line_spacing=15
             )
-            return [TextSegment(text=text.strip(), style=style)]
+            return [TextSegment(text=self.process_inline_formats(text.strip()), style=style)]
 
-        # 处理普通文本
+        # 处理普通文本，应用行内格式
         style = TextStyle(
             font_name='regular',
             indent=40 if self.current_section else 0,
             line_spacing=15
         )
 
-        return [TextSegment(text=text.strip(), style=style)]
+        return [TextSegment(text=self.process_inline_formats(text.strip()), style=style)]
 
 
 class TextRenderer:
@@ -541,16 +738,80 @@ class TextRenderer:
 
     def draw_text_with_emoji(self, draw: ImageDraw.ImageDraw, pos: Tuple[int, int], text: str,
                              font: ImageFont.FreeTypeFont, emoji_font: ImageFont.FreeTypeFont,
-                             fill: str = "white") -> int:
+                             fill: str = "white", style: TextStyle = None) -> int:
         """绘制包含emoji的文本，返回绘制宽度"""
         x, y = pos
         total_width = 0
+        
+        # 为代码块和引用块添加背景
+        if style and (style.is_code or style.is_quote):
+            # 先测量整行文本宽度
+            text_width, text_height = self.measure_text(text, font, emoji_font)
+            
+            # 绘制背景
+            if style.is_code:
+                # 代码块使用浅灰色背景
+                code_bg_color = (50, 50, 50, 60) if style.is_dark_theme else (230, 230, 230, 100)
+                draw.rounded_rectangle(
+                    [(x-10, y-5), (x + text_width + 10, y + text_height + 5)], 
+                    radius=5, 
+                    fill=code_bg_color
+                )
+            elif style.is_quote:
+                # 引用块左侧添加竖线
+                quote_color = (100, 180, 255, 200)  # 浅蓝色
+                draw.rectangle(
+                    [(x-15, y-5), (x-10, y + text_height + 5)],
+                    fill=quote_color
+                )
+                # 引用块背景
+                quote_bg_color = (70, 70, 70, 40) if style.is_dark_theme else (240, 240, 255, 70)
+                draw.rounded_rectangle(
+                    [(x-10, y-5), (x + text_width + 10, y + text_height + 5)], 
+                    radius=5, 
+                    fill=quote_bg_color
+                )
 
+        # 改进列表项渲染
+        if style and style.is_list_item and text.startswith(('•', '-', '+')):
+            # 提取列表标记和内容
+            parts = text.split(' ', 1)
+            marker = parts[0]
+            content = parts[1] if len(parts) > 1 else ""
+            
+            # 绘制列表标记
+            # 使用加粗字体绘制列表标记
+            marker_font = self.font_manager.get_font(TextStyle(font_name='bold', font_size=style.font_size))
+            bbox = draw.textbbox((x, y), marker, font=marker_font)
+            draw.text((x, y), marker, font=marker_font, fill=fill)
+            marker_width = bbox[2] - bbox[0]
+            
+            # 绘制内容，缩进10像素
+            for char in content:
+                if emoji.is_emoji(char):
+                    # 使用emoji字体
+                    bbox = draw.textbbox((x + marker_width + 10, y), char, font=emoji_font)
+                    draw.text((x + marker_width + 10, y), char, font=emoji_font, fill=fill)
+                    char_width = bbox[2] - bbox[0]
+                else:
+                    # 使用常规字体
+                    bbox = draw.textbbox((x + marker_width + 10, y), char, font=font)
+                    draw.text((x + marker_width + 10, y), char, font=font, fill=fill)
+                    char_width = bbox[2] - bbox[0]
+                
+                x += char_width
+                total_width += char_width
+                
+            # 添加列表标记和缩进的宽度
+            total_width += marker_width + 10
+            return total_width
+        
+        # 常规文本绘制
         for char in text:
             if emoji.is_emoji(char):
                 # 使用emoji字体
                 bbox = draw.textbbox((x, y), char, font=emoji_font)
-                draw.text((x, y), char, font=emoji_font, fill=fill)
+                draw.text((x, y), char, font=emoji_font, fill=fill, embedded_color=True)
                 char_width = bbox[2] - bbox[0]
             else:
                 # 使用常规字体
@@ -578,6 +839,14 @@ class TextRenderer:
 
             # 计算当前行高度
             line_height = line.height * line.line_count
+            
+            # 代码块需要额外间距
+            if hasattr(line.style, 'is_code') and line.style.is_code:
+                line_height += 20  # 代码块上下各加10px的内边距
+            
+            # 引用块需要额外间距
+            if hasattr(line.style, 'is_quote') and line.style.is_quote:
+                line_height += 10  # 引用块上下各加5px的内边距
 
             # 签名的高度
             if i == len(processed_lines) - 1:
@@ -601,6 +870,25 @@ class TextRenderer:
         """将文本分割成合适宽度的行，支持emoji"""
         if not segment.text.strip():
             return [ProcessedLine(text='', style=segment.style, height=0, line_count=1)]
+            
+        # 代码块特殊处理：保留原始换行
+        if hasattr(segment.style, 'is_code') and segment.style.is_code:
+            lines = segment.text.split('\n')
+            processed_lines = []
+            
+            font = self.font_manager.get_font(segment.style)
+            emoji_font = self.font_manager.fonts['emoji_30']
+            
+            for line in lines:
+                _, height = self.measure_text(line, font, emoji_font)
+                processed_lines.append(ProcessedLine(
+                    text=line,
+                    style=segment.style,
+                    height=height,
+                    line_count=1
+                ))
+            
+            return processed_lines
 
         font = self.font_manager.get_font(segment.style)
         emoji_font = self.font_manager.fonts['emoji_30']
@@ -699,9 +987,98 @@ def compress_image(image_path: str, output_path: str, max_size: int = 3145728): 
             print("The image could not be compressed enough to meet the size requirements.")
 
 
+def preprocess_text(input_text: str) -> Tuple[Optional[str], str]:
+    """预处理输入文本，解析JSON并提取可用的文本内容
+    
+    Args:
+        input_text: 输入文本，可能是JSON格式或普通文本
+        
+    Returns:
+        Tuple[Optional[str], str]: (logo_url, content_text)
+        logo_url可能为None，content_text为处理后的文本内容
+    """
+    # 首先检查是否包含|LOGO|分隔符（大写）
+    logo_url = None
+    content_text = input_text
+    
+    if "|LOGO|" in input_text:
+        parts = input_text.split("|LOGO|", 1)
+        if len(parts) == 2:
+            logo_url = parts[0].strip()
+            content_text = parts[1].strip()
+            
+            # 如果剩余内容为空，使用默认文本
+            if not content_text:
+                content_text = "图片卡片"
+    
+    # 如果没有使用分隔符，则检查文本内容开头是否为图片URL
+    elif content_text:
+        url_pattern = r'^(https?://\S+\.(jpg|jpeg|png|gif|webp))(.*)$'
+        match = re.match(url_pattern, content_text, re.IGNORECASE | re.DOTALL)
+        
+        if match:
+            # 如果消息内容以图片URL开头，则将其作为logo
+            logo_url = match.group(1)
+            remaining_text = match.group(3).strip()
+            
+            # 如果剩余内容为空，使用默认文本
+            if not remaining_text:
+                remaining_text = "图片卡片"
+                
+            # 更新内容
+            content_text = remaining_text
+    
+    # 处理转义字符
+    # 1. 处理文本中的转义序列
+    content_text = content_text.replace('\\n', '\n')
+    content_text = content_text.replace('\\t', '\t')
+    content_text = content_text.replace('\\r', '\r')
+    
+    # 2. 处理特殊的文本标记
+    content_text = content_text.replace('!~!', '\n')
+    
+    # 尝试解析为JSON
+    try:
+        # 检查是否是JSON格式
+        if content_text.strip().startswith('{') and content_text.strip().endswith('}'):
+            data = json.loads(content_text)
+            result_text = ""
+            
+            # 提取"result"字段
+            if "result" in data:
+                result_content = data["result"]
+                # 处理转义的换行符
+                result_content = result_content.replace('\\n', '\n')
+                result_text += result_content + "\n\n"
+            
+            # 提取"text"字段
+            if "text" in data:
+                text_content = data["text"]
+                # 处理转义的换行符
+                text_content = text_content.replace('\\n', '\n')
+                # 去除HTML标签
+                text_content = re.sub(r'<[^>]+>', '', text_content)
+                # 处理HTML实体
+                text_content = html.unescape(text_content)
+                result_text += text_content
+            
+            # 处理特殊标记
+            result_text = result_text.replace('!~!', '\n')
+            
+            return logo_url, result_text
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        # 如果不是有效的JSON或解析出错，返回原始文本
+        pass
+    
+    return logo_url, content_text
+
+
 def generate_image(text: str, output_path: str, title_image: Optional[str] = None):
     """生成图片主函数 - 修复彩色emoji渲染"""
     try:
+        # 预处理输入文本 - 只处理文本内容，不处理logo
+        _, text = preprocess_text(text)
+        
         width = 720
         current_dir = os.path.dirname(os.path.abspath(__file__))
         font_paths = {
@@ -715,6 +1092,9 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Font file not found: {path}")
 
+        # 获取主题颜色 - 在解析文本前获取，用于传递给TextStyle
+        background_color, text_color, is_dark_theme = get_theme_colors()
+        
         # 初始化组件
         font_manager = FontManager(font_paths)
         rect_width = width - 80
@@ -722,8 +1102,17 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
         parser = MarkdownParser()
         renderer = TextRenderer(font_manager, max_content_width)
 
+        # 如果有标题图片，在文本前添加分隔符
+        if title_image:
+            # 添加一个空行作为分隔
+            text = "\n\n" + text
+        
         # 解析文本
         segments = parser.parse(text)
+        # 设置主题信息
+        for segment in segments:
+            segment.style.is_dark_theme = is_dark_theme
+            
         processed_lines = []
 
         for segment in segments:
@@ -743,35 +1132,32 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
         title_height = 0
         if title_image:
             try:
-                # 判断是否为URL
-                if title_image.startswith(('http://', 'https://')):
-                    # 从URL下载图像
-                    img = download_image_with_timeout(title_image)
-                    if img is None:
-                        print(f"无法加载标题图像预览: {title_image}")
-                    else:
-                        aspect_ratio = img.height / img.width
-                        title_height = int((rect_width - 40) * aspect_ratio) + 40
+                if isinstance(title_image, str) and title_image.startswith(('http://', 'https://')):
+                    response = requests.get(title_image)
+                    response.raise_for_status()
+                    img = Image.open(BytesIO(response.content))
                 else:
-                    # 从本地文件加载
-                    with Image.open(title_image) as img:
-                        aspect_ratio = img.height / img.width
-                        title_height = int((rect_width - 40) * aspect_ratio) + 40
+                    img = Image.open(title_image)
+                aspect_ratio = img.height / img.width
+                title_height = int((rect_width - 40) * aspect_ratio) + 40
             except Exception as e:
                 print(f"Title image processing error: {e}")
 
         content_height = renderer.calculate_height(processed_lines)
+        
+        # 确保最小高度，使短文本也有合适的显示空间
+        min_content_height = 300  # 最小内容高度
+        content_height = max(content_height, min_content_height)
+        
         rect_height = content_height + title_height
         rect_x = (width - rect_width) // 2
         rect_y = 40
-        total_height = rect_height + 80
+        total_height = rect_height + 80  # 上下各添加40像素的边距
 
         # 创建RGBA背景
         background = create_gradient_background(width, total_height)
         draw = ImageDraw.Draw(background)
 
-        # 获取主题颜色
-        background_color, text_color, is_dark_theme = get_theme_colors()
         if len(background_color) == 3:
             background_color = background_color + (128,)  # 添加alpha通道
 
@@ -793,24 +1179,65 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
                     current_y += line.style.line_spacing
                 continue
 
-            x = rect_x + 40 + line.style.indent
-            current_x = x
-
-            # 逐字符渲染
-            for char in line.text:
-                if emoji.is_emoji(char):
-                    # emoji字体渲染
-                    emoji_font = font_manager.fonts['emoji_30']
-                    bbox = draw.textbbox((current_x, current_y), char, font=emoji_font)
-                    # 使用RGBA模式绘制emoji
-                    draw.text((current_x, current_y), char, font=emoji_font, embedded_color=True)
-                    current_x += bbox[2] - bbox[0]
-                else:
-                    # 普通文字渲染
-                    font = font_manager.get_font(line.style)
-                    bbox = draw.textbbox((current_x, current_y), char, font=font)
-                    draw.text((current_x, current_y), char, font=font, fill=text_color)
-                    current_x += bbox[2] - bbox[0]
+            # 计算文本起始位置
+            base_x = rect_x + 40
+            
+            # 处理对齐方式
+            if hasattr(line.style, 'alignment') and line.style.alignment == 'right':
+                # 右对齐：先计算文本宽度
+                font = font_manager.get_font(line.style)
+                text_width = 0
+                for char in line.text:
+                    if emoji.is_emoji(char):
+                        emoji_font = font_manager.fonts['emoji_30']
+                        bbox = draw.textbbox((0, 0), char, font=emoji_font)
+                    else:
+                        bbox = draw.textbbox((0, 0), char, font=font)
+                    text_width += bbox[2] - bbox[0]
+                # 从右边计算起始x位置
+                x = rect_x + rect_width - 40 - text_width
+            else:
+                # 默认左对齐
+                x = base_x + line.style.indent
+            
+            # 设置字体和特殊样式
+            font = font_manager.get_font(line.style)
+            emoji_font = font_manager.fonts['emoji_30']
+            
+            # 确保样式中包含theme信息
+            line.style.is_dark_theme = is_dark_theme
+            
+            # 为代码块和引用块添加背景
+            if (hasattr(line.style, 'is_code') and line.style.is_code) or \
+               (hasattr(line.style, 'is_quote') and line.style.is_quote):
+                # 代码块和引用块背景在draw_text_with_emoji中处理
+                renderer.draw_text_with_emoji(
+                    draw, (x, current_y), line.text, 
+                    font, emoji_font, text_color, line.style
+                )
+            elif hasattr(line.style, 'is_list_item') and line.style.is_list_item:
+                # 列表项特殊处理
+                renderer.draw_text_with_emoji(
+                    draw, (x, current_y), line.text, 
+                    font, emoji_font, text_color, line.style
+                )
+            else:
+                # 常规文本逐字符渲染
+                current_x = x
+                for char in line.text:
+                    if emoji.is_emoji(char):
+                        # emoji字体渲染
+                        emoji_font = font_manager.fonts['emoji_30']
+                        bbox = draw.textbbox((current_x, current_y), char, font=emoji_font)
+                        # 使用RGBA模式绘制emoji
+                        draw.text((current_x, current_y), char, font=emoji_font, embedded_color=True)
+                        current_x += bbox[2] - bbox[0]
+                    else:
+                        # 普通文字渲染
+                        font = font_manager.get_font(line.style)
+                        bbox = draw.textbbox((current_x, current_y), char, font=font)
+                        draw.text((current_x, current_y), char, font=font, fill=text_color)
+                        current_x += bbox[2] - bbox[0]
 
             if i < len(processed_lines) - 1:
                 current_y += line.height + line.style.line_spacing
