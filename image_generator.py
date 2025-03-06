@@ -17,6 +17,15 @@ from io import BytesIO
 import time
 from PIL import UnidentifiedImageError
 
+# 导入配置
+try:
+    from config import config
+except ImportError:
+    # 如果无法导入配置，使用默认签名
+    class DummyConfig:
+        SIGNATURE_TEXT = "—飞天"
+    config = DummyConfig()
+
 
 @dataclass
 class TextStyle:
@@ -270,41 +279,6 @@ def round_corner_image(image: Image.Image, radius: int) -> Image.Image:
     return output
 
 
-def download_image_with_timeout(url: str, timeout: int = 10, max_retries: int = 3) -> Optional[Image.Image]:
-    """
-    从URL下载图像，支持超时和重试
-    
-    Args:
-        url: 图像URL
-        timeout: 超时时间（秒）
-        max_retries: 最大重试次数
-        
-    Returns:
-        PIL.Image对象或None（如果下载失败）
-    """
-    retry_count = 0
-    while retry_count < max_retries:
-        try:
-            response = requests.get(url, timeout=timeout, stream=True)
-            if response.status_code == 200:
-                try:
-                    return Image.open(BytesIO(response.content))
-                except UnidentifiedImageError:
-                    print(f"URL内容不是有效的图像: {url}")
-                    return None
-            else:
-                print(f"下载图像失败，状态码: {response.status_code}, URL: {url}")
-                retry_count += 1
-                time.sleep(1)  # 等待1秒后重试
-        except (requests.RequestException, IOError) as e:
-            print(f"下载图像出错: {e}, URL: {url}")
-            retry_count += 1
-            time.sleep(1)  # 等待1秒后重试
-    
-    print(f"达到最大重试次数，无法下载图像: {url}")
-    return None
-
-
 def add_title_image(background: Image.Image, title_image_path: str, rect_x: int, rect_y: int, rect_width: int) -> int:
     """添加标题图片"""
     try:
@@ -399,7 +373,7 @@ class MarkdownParser:
         # 最后添加签名，不添加任何额外空行
         if segments:
             signature = TextSegment(
-                text="                                         —By 嫣然",
+                text=config.SIGNATURE_TEXT,
                 style=TextStyle(font_name='regular', indent=0, line_spacing=0)  # 设置 line_spacing=0
             )
             segments.append(signature)
@@ -850,3 +824,38 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
     except Exception as e:
         print(f"Error generating image: {e}")
         raise
+
+
+def download_image_with_timeout(url: str, timeout: int = 10, max_retries: int = 3) -> Optional[Image.Image]:
+    """
+    从URL下载图像，支持超时和重试
+    
+    Args:
+        url: 图像URL
+        timeout: 超时时间（秒）
+        max_retries: 最大重试次数
+        
+    Returns:
+        PIL.Image对象或None（如果下载失败）
+    """
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            response = requests.get(url, timeout=timeout, stream=True)
+            if response.status_code == 200:
+                try:
+                    return Image.open(BytesIO(response.content))
+                except UnidentifiedImageError:
+                    print(f"URL内容不是有效的图像: {url}")
+                    return None
+            else:
+                print(f"下载图像失败，状态码: {response.status_code}, URL: {url}")
+                retry_count += 1
+                time.sleep(1)  # 等待1秒后重试
+        except (requests.RequestException, IOError) as e:
+            print(f"下载图像出错: {e}, URL: {url}")
+            retry_count += 1
+            time.sleep(1)  # 等待1秒后重试
+    
+    print(f"达到最大重试次数，无法下载图像: {url}")
+    return None

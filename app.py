@@ -248,39 +248,22 @@ def chat_completions():
                 400
             ))
         
-        # 检查是否使用了分隔符"|LOGO|"来分割logo和正文
-        logo_separator = "|LOGO|"
-        if logo_separator in last_message and not title_image:
-            parts = last_message.split(logo_separator, 1)
-            if len(parts) == 2:
-                logo_url = parts[0].strip()
-                remaining_text = parts[1].strip()
-                
-                # 如果剩余内容为空，使用默认文本
-                if not remaining_text:
-                    remaining_text = "图片卡片"
-                    
-                # 更新参数
-                title_image = logo_url
-                last_message = remaining_text
+        # 检查文本内容开头是否为图片URL
+        url_pattern = r'^(https?://\S+\.(jpg|jpeg|png|gif|webp))(.*)$'
+        match = re.match(url_pattern, last_message, re.IGNORECASE | re.DOTALL)
         
-        # 如果没有使用分隔符，则检查文本内容开头是否为图片URL（向后兼容）
-        elif not title_image:
-            url_pattern = r'^(https?://\S+\.(jpg|jpeg|png|gif|webp))(.*)$'
-            match = re.match(url_pattern, last_message, re.IGNORECASE | re.DOTALL)
+        if match and not title_image:
+            # 如果消息内容以图片URL开头且没有设置title_image，则将其作为logo
+            logo_url = match.group(1)
+            remaining_text = match.group(3).strip()
             
-            if match:
-                # 如果消息内容以图片URL开头且没有设置title_image，则将其作为logo
-                logo_url = match.group(1)
-                remaining_text = match.group(3).strip()
+            # 如果剩余内容为空，使用默认文本
+            if not remaining_text:
+                remaining_text = "图片卡片"
                 
-                # 如果剩余内容为空，使用默认文本
-                if not remaining_text:
-                    remaining_text = "图片卡片"
-                    
-                # 更新参数
-                title_image = logo_url
-                last_message = remaining_text
+            # 更新参数
+            title_image = logo_url
+            last_message = remaining_text
         
         # 生成图片
         output_filename = generate_unique_filename()
