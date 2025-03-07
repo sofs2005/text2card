@@ -961,36 +961,29 @@ class MarkdownParser:
             color_segments = []
             last_end = 0
             
+            # 创建基础样式
+            base_style = TextStyle(
+                font_name='regular',
+                indent=40 if self.current_section else 0,
+                line_spacing=15,
+            )
+
+            # 将所有颜色标签段落合并到一个列表中
+            text_parts = []
+            
             for match in self.html_color_pattern.finditer(text):
                 # 添加标签前的文本
                 if match.start() > last_end:
                     before_text = text[last_end:match.start()]
                     if before_text.strip():
                         processed_text, format_styles = self.process_inline_formats(before_text)
-                        style = TextStyle(
-                            font_name='bold' if format_styles['is_bold'] else 'regular',
-                            indent=40 if self.current_section else 0,
-                            line_spacing=15,
-                            is_bold=format_styles['is_bold'],
-                            is_italic=format_styles['is_italic']
-                        )
-                        color_segments.append(TextSegment(text=processed_text, style=style))
+                        text_parts.append((processed_text, None, format_styles))
                 
                 # 提取颜色值和文本内容
                 color_value = match.group(1).strip()
                 content = match.group(3).strip()
                 processed_content, format_styles = self.process_inline_formats(content)
-                
-                # 创建带颜色的文本段
-                color_style = TextStyle(
-                    font_name='bold' if format_styles['is_bold'] else 'regular',
-                    indent=40 if self.current_section else 0,
-                    line_spacing=15,
-                    text_color=color_value,
-                    is_bold=format_styles['is_bold'],
-                    is_italic=format_styles['is_italic']
-                )
-                color_segments.append(TextSegment(text=processed_content, style=color_style))
+                text_parts.append((processed_content, color_value, format_styles))
                 last_end = match.end()
             
             # 添加最后一段文本
@@ -998,17 +991,24 @@ class MarkdownParser:
                 remaining_text = text[last_end:]
                 if remaining_text.strip():
                     processed_text, format_styles = self.process_inline_formats(remaining_text)
+                    text_parts.append((processed_text, None, format_styles))
+            
+            # 创建一个包含所有文本部分的段落
+            if text_parts:
+                segments = []
+                for text_part, color_value, format_styles in text_parts:
                     style = TextStyle(
                         font_name='bold' if format_styles['is_bold'] else 'regular',
                         indent=40 if self.current_section else 0,
                         line_spacing=15,
+                        text_color=color_value,
                         is_bold=format_styles['is_bold'],
                         is_italic=format_styles['is_italic']
                     )
-                    color_segments.append(TextSegment(text=processed_text, style=style))
+                    segments.append(TextSegment(text=text_part, style=style))
+                return segments
             
-            # 返回处理后的段落
-            return color_segments
+            return []
 
         # 检查是否匹配标题模式: *标题* 或 **标题**
         header_match = re.match(r'^\*+\s*(.+?)\s*\*+$', text)
