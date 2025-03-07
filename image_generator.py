@@ -373,13 +373,16 @@ class MarkdownParser:
         self.header_pattern = re.compile(r'^(\*+) (.+?)(\*+)$')
         # 添加HTML颜色标签的正则表达式
         self.html_color_pattern = re.compile(r'<span\s+style=["\']color:\s*([^;"\']+)[;"\'](.*?)>(.*?)</span>', re.IGNORECASE)
-
+        # 引用组ID，用于跟踪连续的引用
+        self.current_quote_group = 0
+        
     def reset(self):
         self.segments = []
         self.current_section = None  # 当前处理的段落类型
         self.in_code_block = False   # 是否在代码块内
         self.in_quote_block = False  # 是否在引用块内
         self.quote_indent = 0        # 引用块缩进级别
+        self.current_quote_group = 0  # 重置引用组ID
 
     def parse(self, text: str) -> List[TextSegment]:
         """解析整个文本"""
@@ -450,103 +453,144 @@ class MarkdownParser:
                 
             # 检查是否在引用块内或开始一个新的引用块
             if line.startswith('> ') or (line == '>' and not self.in_code_block):
-                # 如果之前不在引用块内，标记进入引用块
-                if not self.in_quote_block:
-                    self.in_quote_block = True
-                    self.quote_indent = 20
+                # 标记进入引用块状态
+                self.in_quote_block = True
                 
-                # 处理引用块内容    
-                # 即使是空的引用行 ">", 也要保持引用样式
-                if line == '>' or line == '':
-                    # 空引用行
+                # 处理引用内容
+                quote_level = 0
+                quote_content = line
+                while quote_content.startswith('> '):
+                    quote_level += 1
+                    quote_content = quote_content[2:]
+                
+                self.quote_indent = quote_level * 20
+                
+                # 空引用行处理 - 作为引用块内的空行而不是显示出来
+                if not quote_content.strip():
+                    # 只添加一个带引用样式的空行，不显示 ">"
                     quote_style = TextStyle(
                         font_name='regular',
                         indent=40 + self.quote_indent,
-                        line_spacing=15,
+                        line_spacing=8,  # 减小空行间距
                         is_quote=True
                     )
+                    # 使用空文本，但保持引用块样式
                     segments.append(TextSegment(
                         text="",
                         style=quote_style,
-                        original_text=line
+                        original_text=""  # 使用空原始文本
                     ))
+                # 正常引用内容处理
                 else:
-                    # 正常引用内容
-                    quote_level = 0
-                    while line.startswith('> '):
-                        quote_level += 1
-                        line = line[2:]
-                    
-                    self.quote_indent = quote_level * 20
-                    
-                    # 处理引用块内部的文本，包括HTML颜色标签
-                    # 检查是否包含HTML颜色标签
-                    if self.html_color_pattern.search(line.strip()):
-                        # 将所有颜色标签段落合并到一个列表中
+                    # 检查引用内容是否包含颜色标签
+                    if self.html_color_pattern.search(quote_content.strip()):
+                        # 准备收集所有颜色段落
                         text_parts = []
                         last_end = 0
                         
-                        for match in self.html_color_pattern.finditer(line.strip()):
-                            # 添加标签前的文本
+                        # 处理所有颜色标签
+                        for match in self.html_color_pattern.finditer(quote_content.strip()):
+                            # 处理标签前的文本
                             if match.start() > last_end:
-                                before_text = line.strip()[last_end:match.start()]
+                                before_text = quote_content.strip()[last_end:match.start()]
                                 if before_text.strip():
                                     processed_text, format_styles = self.process_inline_formats(before_text)
                                     text_parts.append((processed_text, None, format_styles))
                             
-                            # 提取颜色值和文本内容
+                            # 处理颜色标签内的文本
                             color_value = match.group(1).strip()
                             content = match.group(3).strip()
                             processed_content, format_styles = self.process_inline_formats(content)
                             text_parts.append((processed_content, color_value, format_styles))
                             last_end = match.end()
                         
-                        # 添加最后一段文本
-                        if last_end < len(line.strip()):
-                            remaining_text = line.strip()[last_end:]
+                        # 处理最后剩余的文本
+                        if last_end < len(quote_content.strip()):
+                            remaining_text = quote_content.strip()[last_end:]
                             if remaining_text.strip():
                                 processed_text, format_styles = self.process_inline_formats(remaining_text)
                                 text_parts.append((processed_text, None, format_styles))
                         
-                        # 创建一个包含所有文本部分的段落
+                        # 创建组合的段落
                         if text_parts:
-                            segments_line = []
-                            for text_part, color_value, format_styles in text_parts:
-                                quote_style = TextStyle(
+                            # 如果只有一个部分无颜色
+                            if len(text_parts) == 1 and text_parts[0][1] is None:
+                                text_part, _, format_styles = text_parts[0]
+                                style = TextStyle(
                                     font_name='bold' if format_styles['is_bold'] else 'regular',
                                     indent=40 + self.quote_indent,
                                     line_spacing=15,
-                                    is_quote=True,  # 标记为引用样式
-                                    text_color=color_value,
+                                    is_quote=True,
                                     is_bold=format_styles['is_bold'],
                                     is_italic=format_styles['is_italic']
                                 )
-                                segments_line.append(TextSegment(
-                                    text=text_part, 
-                                    style=quote_style,
-                                    original_text=lines[i]
+                                segments.append(TextSegment(
+                                    text=text_part,
+                                    style=style,
+                                    original_text=""
                                 ))
-                            segments.extend(segments_line)
+                            else:
+                                # 创建合并文本
+                                combined_text = ""
+                                for text_part, _, _ in text_parts:
+                                    combined_text += text_part
+                                
+                                # 基础样式
+                                base_style = TextStyle(
+                                    font_name='regular',
+                                    indent=40 + self.quote_indent,
+                                    line_spacing=15,
+                                    is_quote=True
+                                )
+                                
+                                # 创建最终段落
+                                result_segment = TextSegment(
+                                    text=combined_text,
+                                    style=base_style,
+                                    original_text=""
+                                )
+                                
+                                # 保存原始段落信息
+                                original_segments = []
+                                for text_part, color_value, format_styles in text_parts:
+                                    style = TextStyle(
+                                        font_name='bold' if format_styles['is_bold'] else 'regular',
+                                        indent=40 + self.quote_indent,
+                                        line_spacing=15,
+                                        is_quote=True,
+                                        text_color=color_value,
+                                        is_bold=format_styles['is_bold'],
+                                        is_italic=format_styles['is_italic']
+                                    )
+                                    original_segments.append(TextSegment(
+                                        text=text_part,
+                                        style=style,
+                                        original_text=""
+                                    ))
+                                
+                                result_segment.original_segments = original_segments
+                                segments.append(result_segment)
                     else:
-                        processed_line, format_styles = self.process_inline_formats(line.strip())
-                        quote_style = TextStyle(
+                        # 简单引用内容处理
+                        processed_content, format_styles = self.process_inline_formats(quote_content.strip())
+                        style = TextStyle(
                             font_name='bold' if format_styles['is_bold'] else 'regular',
                             indent=40 + self.quote_indent,
                             line_spacing=15,
-                            is_quote=True,  # 标记为引用样式
+                            is_quote=True,
                             is_bold=format_styles['is_bold'],
                             is_italic=format_styles['is_italic']
                         )
                         segments.append(TextSegment(
-                            text=processed_line,
-                            style=quote_style,
-                            original_text=lines[i]
+                            text=processed_content,
+                            style=style,
+                            original_text=""
                         ))
+            # 非引用块处理
             else:
-                # 重置引用块状态
-                if self.in_quote_block:
-                    self.in_quote_block = False
-                    self.quote_indent = 0
+                # 退出引用块状态
+                self.in_quote_block = False
+                self.quote_indent = 0
                 
                 # 空行处理
                 if not line:
@@ -859,6 +903,27 @@ class MarkdownParser:
                 for segment in color_segments:
                     segment.style.is_list_item = True
                 
+                # 如果有多个段落，合并它们
+                if len(color_segments) > 1:
+                    # 创建一个合并的文本段落
+                    combined_text = ""
+                    for segment in color_segments:
+                        combined_text += segment.text
+                    
+                    # 基本样式
+                    base_style = TextStyle(
+                        font_name='regular',
+                        indent=indent_level,
+                        line_spacing=15,
+                        is_list_item=True,
+                    )
+                    
+                    # 创建最终段落
+                    result_segment = TextSegment(text=combined_text, style=base_style)
+                    result_segment.original_segments = color_segments
+                    
+                    return [result_segment]
+                
                 # 返回有颜色的列表项段落
                 return color_segments
             
@@ -939,6 +1004,16 @@ class MarkdownParser:
             
             # 创建一个包含所有文本部分的段落
             if text_parts:
+                # 合并所有文本部分到一个单一的TextSegment中
+                combined_text = ""
+                # 使用基础样式
+                style = TextStyle(
+                    font_name='regular',
+                    indent=40 if self.current_section else 0,
+                    line_spacing=15,
+                )
+                
+                # 创建每个部分的TextSegment
                 segments = []
                 for text_part, color_value, format_styles in text_parts:
                     style = TextStyle(
@@ -949,8 +1024,32 @@ class MarkdownParser:
                         is_bold=format_styles['is_bold'],
                         is_italic=format_styles['is_italic']
                     )
+                    # 添加当前部分的文本到合并文本
+                    combined_text += text_part
                     segments.append(TextSegment(text=text_part, style=style))
-                return segments
+                
+                # 如果只有一个部分，直接返回它
+                if len(segments) == 1:
+                    return segments
+                
+                # 否则收集并合并每个部分的文本内容，然后返回一个包含所有文本的TextSegment
+                result_text = ""
+                for segment in segments:
+                    result_text += segment.text
+                
+                # 创建一个新的TextSegment，包含所有文本
+                result_style = TextStyle(
+                    font_name='regular',
+                    indent=40 if self.current_section else 0,
+                    line_spacing=15,
+                )
+                
+                # 使用一个特殊的标记，稍后在渲染过程中处理
+                # 将包含所有原始段落的列表附加到新段落
+                result_segment = TextSegment(text=result_text, style=result_style)
+                result_segment.original_segments = segments
+                
+                return [result_segment]
             
             return []
 
@@ -1104,6 +1203,28 @@ class TextRenderer:
         x, y = pos
         total_width = 0
         
+        # 检查是否是带有original_segments的合并段落
+        if hasattr(style, '_source_segment') and hasattr(style._source_segment, 'original_segments'):
+            # 使用原始段落进行绘制
+            current_x = x
+            for segment in style._source_segment.original_segments:
+                segment_font = self.font_manager.get_font(segment.style)
+                segment_style = segment.style
+                segment_text = segment.text
+                segment_color = fill
+                if segment_style.text_color:
+                    segment_color = segment_style.text_color
+                
+                # 绘制这个段落
+                width = self.draw_text_with_emoji(
+                    draw, (current_x, y), segment_text,
+                    segment_font, emoji_font, segment_color, segment_style
+                )
+                current_x += width
+                total_width += width
+            
+            return total_width
+        
         # 使用样式中的颜色（如果有）
         text_color = fill
         if style and style.text_color:
@@ -1117,6 +1238,10 @@ class TextRenderer:
             # 先测量整行文本宽度
             text_width, text_height = self.measure_text(text, font, emoji_font)
             
+            # 对于空文本的引用行，确保有最小高度以保持连续性
+            if style.is_quote and not text.strip():
+                text_height = max(text_height, 20)  # 设置最小高度
+            
             # 绘制背景
             if style.is_code:
                 # 代码块使用浅灰色背景
@@ -1129,14 +1254,16 @@ class TextRenderer:
             elif style.is_quote:
                 # 引用块左侧添加竖线
                 quote_color = (100, 180, 255, 200)  # 浅蓝色
+                # 对于空文本，确保至少有最小高度的竖线
+                min_height = max(text_height + 10, 20)
                 draw.rectangle(
-                    [(x-15, y-5), (x-10, y + text_height + 5)],
+                    [(x-15, y-5), (x-10, y + min_height)],
                     fill=quote_color
                 )
                 # 引用块背景
                 quote_bg_color = (70, 70, 70, 40) if style.is_dark_theme else (240, 240, 255, 70)
                 draw.rounded_rectangle(
-                    [(x-10, y-5), (x + text_width + 10, y + text_height + 5)], 
+                    [(x-10, y-5), (x + max(text_width, 30) + 10, y + min_height)], 
                     radius=5, 
                     fill=quote_bg_color
                 )
@@ -1274,6 +1401,39 @@ class TextRenderer:
         """将文本分割成合适宽度的行，支持emoji"""
         processed_lines = []
         
+        # 处理换行符
+        if segment.text == "\n":
+            # 直接返回一个空行，强制换行
+            processed_lines.append(ProcessedLine(
+                text='',
+                style=segment.style,
+                height=20,  # 设置一个固定的行高
+                line_count=1
+            ))
+            return processed_lines
+        
+        # 处理带有original_segments的合并段落
+        if hasattr(segment, 'original_segments'):
+            # 获取基础字体用于测量
+            font = self.font_manager.get_font(segment.style)
+            emoji_font = self.font_manager.fonts.get('emoji_30')
+            
+            # 测量行高
+            _, height = self.measure_text(segment.text, font, emoji_font)
+            
+            # 创建ProcessedLine时传递原始段落信息
+            processed_line = ProcessedLine(
+                text=segment.text,
+                style=segment.style,
+                height=height,
+                line_count=1
+            )
+            # 附加原始段落信息
+            processed_line.style._source_segment = segment
+            
+            processed_lines.append(processed_line)
+            return processed_lines
+        
         # 获取字体和emoji字体
         font = self.font_manager.get_font(segment.style)
         emoji_font = self.font_manager.fonts.get('emoji_30')
@@ -1348,13 +1508,13 @@ class TextRenderer:
             
             return processed_lines
 
+        # 获取字体和emoji字体
         font = self.font_manager.get_font(segment.style)
         emoji_font = self.font_manager.fonts.get('emoji_30')
+        
+        # 获取单词列表
         words = []
         current_word = ''
-        processed_lines = []
-
-        # 分词处理
         for char in segment.text:
             if emoji.is_emoji(char):
                 if current_word:
