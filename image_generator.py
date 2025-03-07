@@ -449,7 +449,7 @@ class MarkdownParser:
                 continue
                 
             # 检查是否在引用块内或开始一个新的引用块
-            if line.startswith('> ') or (line == '>' and not self.in_code_block) or self.in_quote_block:
+            if line.startswith('> ') or (line == '>' and not self.in_code_block):
                 # 如果之前不在引用块内，标记进入引用块
                 if not self.in_quote_block:
                     self.in_quote_block = True
@@ -482,7 +482,8 @@ class MarkdownParser:
                     # 处理引用块内部的文本，包括HTML颜色标签
                     # 检查是否包含HTML颜色标签
                     if self.html_color_pattern.search(line.strip()):
-                        color_segments = []
+                        # 将所有颜色标签段落合并到一个列表中
+                        text_parts = []
                         last_end = 0
                         
                         for match in self.html_color_pattern.finditer(line.strip()):
@@ -491,40 +492,13 @@ class MarkdownParser:
                                 before_text = line.strip()[last_end:match.start()]
                                 if before_text.strip():
                                     processed_text, format_styles = self.process_inline_formats(before_text)
-                                    quote_style = TextStyle(
-                                        font_name='bold' if format_styles['is_bold'] else 'regular',
-                                        indent=40 + self.quote_indent,
-                                        line_spacing=15,
-                                        is_quote=True,  # 标记为引用样式
-                                        is_bold=format_styles['is_bold'],
-                                        is_italic=format_styles['is_italic']
-                                    )
-                                    color_segments.append(TextSegment(
-                                        text=processed_text,
-                                        style=quote_style,
-                                        original_text=lines[i]
-                                    ))
+                                    text_parts.append((processed_text, None, format_styles))
                             
                             # 提取颜色值和文本内容
                             color_value = match.group(1).strip()
                             content = match.group(3).strip()
                             processed_content, format_styles = self.process_inline_formats(content)
-                            
-                            # 创建带颜色的文本段
-                            color_style = TextStyle(
-                                font_name='bold' if format_styles['is_bold'] else 'regular',
-                                indent=40 + self.quote_indent,
-                                line_spacing=15,
-                                is_quote=True,  # 标记为引用样式
-                                text_color=color_value,
-                                is_bold=format_styles['is_bold'],
-                                is_italic=format_styles['is_italic']
-                            )
-                            color_segments.append(TextSegment(
-                                text=processed_content,
-                                style=color_style,
-                                original_text=lines[i]
-                            ))
+                            text_parts.append((processed_content, color_value, format_styles))
                             last_end = match.end()
                         
                         # 添加最后一段文本
@@ -532,39 +506,27 @@ class MarkdownParser:
                             remaining_text = line.strip()[last_end:]
                             if remaining_text.strip():
                                 processed_text, format_styles = self.process_inline_formats(remaining_text)
+                                text_parts.append((processed_text, None, format_styles))
+                        
+                        # 创建一个包含所有文本部分的段落
+                        if text_parts:
+                            segments_line = []
+                            for text_part, color_value, format_styles in text_parts:
                                 quote_style = TextStyle(
                                     font_name='bold' if format_styles['is_bold'] else 'regular',
                                     indent=40 + self.quote_indent,
                                     line_spacing=15,
                                     is_quote=True,  # 标记为引用样式
+                                    text_color=color_value,
                                     is_bold=format_styles['is_bold'],
                                     is_italic=format_styles['is_italic']
                                 )
-                                color_segments.append(TextSegment(
-                                    text=processed_text,
+                                segments_line.append(TextSegment(
+                                    text=text_part, 
                                     style=quote_style,
                                     original_text=lines[i]
                                 ))
-                        
-                        # 如果找到颜色标签，添加处理后的段落
-                        if color_segments:
-                            segments.extend(color_segments)
-                        else:
-                            # 如果没有颜色标签，使用常规处理
-                            processed_line, format_styles = self.process_inline_formats(line.strip())
-                            quote_style = TextStyle(
-                                font_name='bold' if format_styles['is_bold'] else 'regular',
-                                indent=40 + self.quote_indent,
-                                line_spacing=15,
-                                is_quote=True,  # 标记为引用样式
-                                is_bold=format_styles['is_bold'],
-                                is_italic=format_styles['is_italic']
-                            )
-                            segments.append(TextSegment(
-                                text=processed_line,
-                                style=quote_style,
-                                original_text=lines[i]
-                            ))
+                            segments.extend(segments_line)
                     else:
                         processed_line, format_styles = self.process_inline_formats(line.strip())
                         quote_style = TextStyle(
