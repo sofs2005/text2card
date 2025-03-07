@@ -565,16 +565,29 @@ class MarkdownParser:
                     # 处理常规行
                     line_segments = self.parse_line(line)
                     segments.extend(line_segments)
-                
+                    
                     # 只在确定有下一行内容时添加空行
+                    # 但是避免在列表项之间添加空行
                     if i < len(lines) - 1:
                         has_next_content = False
                         for next_line in lines[i + 1:]:
                             if next_line.strip():
                                 has_next_content = True
                                 break
-                        if has_next_content:
-                            style = line_segments[-1].style
+                        
+                        # 检查当前行是否是列表项
+                        current_is_list_item = False
+                        if line_segments and hasattr(line_segments[-1].style, 'is_list_item'):
+                            current_is_list_item = line_segments[-1].style.is_list_item
+                        
+                        # 检查下一行是否是列表项
+                        next_is_list_item = False
+                        if i + 1 < len(lines) and lines[i + 1].strip().startswith(('*', '-', '+', '1.', '2.', '3.')):
+                            next_is_list_item = True
+                        
+                        # 如果当前行是列表项，并且下一行也是列表项，则不添加空行
+                        if has_next_content and not (current_is_list_item and next_is_list_item):
+                            style = line_segments[-1].style if line_segments else TextStyle()
                             segments.append(TextSegment(text='', style=TextStyle(line_spacing=style.line_spacing)))
             
             i += 1
@@ -726,6 +739,15 @@ class MarkdownParser:
             indent_space = len(list_match.group(1))
             list_content = list_match.group(3).strip()
             
+            # 检查是否是任务列表项
+            task_match = re.match(r'^\[([ xX])\]\s+(.+)$', list_content)
+            is_task = False
+            is_checked = False
+            if task_match:
+                is_task = True
+                is_checked = task_match.group(1).lower() == 'x'
+                list_content = task_match.group(2).strip()
+            
             # 设置缩进级别
             indent_level = 40 + indent_space * 8  # 根据前导空格数量计算缩进
             
@@ -746,9 +768,19 @@ class MarkdownParser:
                             
                             # 添加列表标记（仅对第一段）
                             if not marker_added:
-                                processed_text = "• " + processed_text
-                                marker_added = True
-                                
+                                if is_task:
+                                    if is_checked:
+                                        # 使用原始颜色值而不是固定的绿色或灰色
+                                        prefix = "[x] "
+                                    else:
+                                        prefix = "[ ] "
+                                    marker_added = True
+                                else:
+                                    prefix = "• "
+                                    marker_added = True
+                            else:
+                                prefix = ""
+                            
                             style = TextStyle(
                                 font_name='bold' if format_styles['is_bold'] else 'regular',
                                 indent=indent_level,
@@ -757,7 +789,7 @@ class MarkdownParser:
                                 is_bold=format_styles['is_bold'],
                                 is_italic=format_styles['is_italic']
                             )
-                            color_segments.append(TextSegment(text=processed_text, style=style))
+                            color_segments.append(TextSegment(text=prefix + processed_text, style=style))
                     
                     # 提取颜色值和文本内容
                     color_value = match.group(1).strip()
@@ -766,8 +798,18 @@ class MarkdownParser:
                     
                     # 添加列表标记（仅对第一段）
                     if not marker_added:
-                        processed_content = "• " + processed_content
-                        marker_added = True
+                        if is_task:
+                            if is_checked:
+                                # 使用原始颜色值而不是固定的绿色或灰色
+                                prefix = "[x] "
+                            else:
+                                prefix = "[ ] "
+                            marker_added = True
+                        else:
+                            prefix = "• "
+                            marker_added = True
+                    else:
+                        prefix = ""
                     
                     # 创建带颜色的文本段
                     color_style = TextStyle(
@@ -779,7 +821,7 @@ class MarkdownParser:
                         is_bold=format_styles['is_bold'],
                         is_italic=format_styles['is_italic']
                     )
-                    color_segments.append(TextSegment(text=processed_content, style=color_style))
+                    color_segments.append(TextSegment(text=prefix + processed_content, style=color_style))
                     last_end = match.end()
                 
                 # 添加最后一段文本
@@ -790,9 +832,19 @@ class MarkdownParser:
                         
                         # 添加列表标记（仅对第一段）
                         if not marker_added:
-                            processed_text = "• " + processed_text
-                            marker_added = True
-                            
+                            if is_task:
+                                if is_checked:
+                                    # 使用原始颜色值而不是固定的绿色或灰色
+                                    prefix = "[x] "
+                                else:
+                                    prefix = "[ ] "
+                                marker_added = True
+                            else:
+                                prefix = "• "
+                                marker_added = True
+                        else:
+                            prefix = ""
+                        
                         style = TextStyle(
                             font_name='bold' if format_styles['is_bold'] else 'regular',
                             indent=indent_level,
@@ -801,122 +853,52 @@ class MarkdownParser:
                             is_bold=format_styles['is_bold'],
                             is_italic=format_styles['is_italic']
                         )
-                        color_segments.append(TextSegment(text=processed_text, style=style))
+                        color_segments.append(TextSegment(text=prefix + processed_text, style=style))
+                
+                # 确保所有段落都被标记为列表项
+                for segment in color_segments:
+                    segment.style.is_list_item = True
                 
                 # 返回有颜色的列表项段落
                 return color_segments
             
             # 处理不含颜色标签的列表项
             processed_content, format_styles = self.process_inline_formats(list_content)
-            style = TextStyle(
-                font_name='bold' if format_styles['is_bold'] else 'regular',
-                indent=indent_level,
-                line_spacing=15,
-                is_list_item=True,
-                is_bold=format_styles['is_bold'],
-                is_italic=format_styles['is_italic']
-            )
-            return [TextSegment(text="• " + processed_content, style=style)]
-        
-        # 处理有序列表项，支持嵌套和颜色标签
-        ordered_list_match = re.match(r'^(\s*)(\d+)\.(\s+)(.+)$', text)
-        if ordered_list_match:
-            indent_space = len(ordered_list_match.group(1))
-            number = ordered_list_match.group(2)
-            space_after = ordered_list_match.group(3)
-            list_content = ordered_list_match.group(4).strip()
             
-            # 设置缩进级别 - 确保序号对齐
-            base_indent = 40 + indent_space * 8  # 基础缩进
-            
-            # 检查列表项是否包含HTML颜色标签
-            if self.html_color_pattern.search(list_content):
-                color_segments = []
-                last_end = 0
-                
-                # 标记是否已添加列表标记
-                number_added = False
-                
-                for match in self.html_color_pattern.finditer(list_content):
-                    # 添加标签前的文本
-                    if match.start() > last_end:
-                        before_text = list_content[last_end:match.start()]
-                        if before_text.strip():
-                            processed_text, format_styles = self.process_inline_formats(before_text)
-                            
-                            # 添加序号前缀（仅对第一段）
-                            if not number_added:
-                                processed_text = f"{number}. {processed_text}"
-                                number_added = True
-                                
-                            style = TextStyle(
-                                font_name='bold' if format_styles['is_bold'] else 'regular',
-                                indent=base_indent,
-                                line_spacing=15,
-                                is_list_item=True,
-                                is_bold=format_styles['is_bold'],
-                                is_italic=format_styles['is_italic']
-                            )
-                            color_segments.append(TextSegment(text=processed_text, style=style))
-                    
-                    # 提取颜色值和文本内容
-                    color_value = match.group(1).strip()
-                    content = match.group(3).strip()
-                    processed_content, format_styles = self.process_inline_formats(content)
-                    
-                    # 添加序号前缀（仅对第一段）
-                    if not number_added:
-                        processed_content = f"{number}. {processed_content}"
-                        number_added = True
-                    
-                    # 创建带颜色的文本段
-                    color_style = TextStyle(
-                        font_name='bold' if format_styles['is_bold'] else 'regular',
-                        indent=base_indent,
+            # 根据是否为任务列表添加不同的标记
+            if is_task:
+                if is_checked:
+                    # 已完成使用绿色文本 [x]
+                    style = TextStyle(
+                        font_name='bold',
+                        indent=indent_level,
                         line_spacing=15,
-                        text_color=color_value,
                         is_list_item=True,
-                        is_bold=format_styles['is_bold'],
-                        is_italic=format_styles['is_italic']
+                        text_color="#22AA22",  # 绿色
+                        is_bold=True
                     )
-                    color_segments.append(TextSegment(text=processed_content, style=color_style))
-                    last_end = match.end()
-                
-                # 添加最后一段文本
-                if last_end < len(list_content):
-                    remaining_text = list_content[last_end:]
-                    if remaining_text.strip():
-                        processed_text, format_styles = self.process_inline_formats(remaining_text)
-                        
-                        # 添加序号前缀（仅对第一段）
-                        if not number_added:
-                            processed_text = f"{number}. {processed_text}"
-                            number_added = True
-                            
-                        style = TextStyle(
-                            font_name='bold' if format_styles['is_bold'] else 'regular',
-                            indent=base_indent,
-                            line_spacing=15,
-                            is_list_item=True,
-                            is_bold=format_styles['is_bold'],
-                            is_italic=format_styles['is_italic']
-                        )
-                        color_segments.append(TextSegment(text=processed_text, style=style))
-                
-                # 返回有颜色的列表项段落
-                return color_segments
-            
-            # 处理不含颜色标签的有序列表项
-            processed_content, format_styles = self.process_inline_formats(list_content)
-            style = TextStyle(
-                font_name='bold' if format_styles['is_bold'] else 'regular',
-                indent=base_indent,
-                line_spacing=15,
-                is_list_item=True,
-                is_bold=format_styles['is_bold'],
-                is_italic=format_styles['is_italic']
-            )
-            return [TextSegment(text=f"{number}. {processed_content}", style=style)]
+                    return [TextSegment(text="[x] " + processed_content, style=style)]
+                else:
+                    # 未完成使用灰色文本 [ ]
+                    style = TextStyle(
+                        font_name='bold',
+                        indent=indent_level,
+                        line_spacing=15,
+                        is_list_item=True,
+                        text_color="#777777",  # 灰色
+                        is_bold=True
+                    )
+                    return [TextSegment(text="[ ] " + processed_content, style=style)]
+            else:
+                style = TextStyle(
+                    font_name='bold' if format_styles['is_bold'] else 'regular',
+                    indent=indent_level,
+                    line_spacing=15,
+                    is_list_item=True,
+                    is_bold=format_styles['is_bold'],
+                    is_italic=format_styles['is_italic']
+                )
+                return [TextSegment(text="• " + processed_content, style=style)]
         
         # 检查普通文本中是否包含HTML颜色标签
         if self.html_color_pattern.search(text):
@@ -1551,7 +1533,7 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
         font_paths = {
             'regular': os.path.join(current_dir, "msyh.ttc"),
             'bold': os.path.join(current_dir, "msyhbd.ttc"),
-            'emoji': os.path.join(current_dir, "TwitterColorEmoji.ttf")  # 或其他彩色emoji字体
+            'emoji': os.path.join(current_dir, "TwitterColorEmoji.ttf")  # 彩色emoji字体
         }
         
         # 验证字体文件
