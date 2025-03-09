@@ -361,21 +361,28 @@ class MarkdownParser:
     """Markdown解析器"""
 
     def __init__(self):
+        """初始化Markdown解析器"""
         self.reset()
+        
         # 编译常用的正则表达式
-        self.bold_pattern = re.compile(r'\*\*(.+?)\*\*')
-        self.italic_pattern = re.compile(r'\*(.+?)\*|_(.+?)_')
-        self.code_pattern = re.compile(r'`(.+?)`')
-        self.link_pattern = re.compile(r'\[(.+?)\]\((.+?)\)')
-        self.strikethrough_pattern = re.compile(r'~~(.+?)~~')
+        self.bold_pattern = re.compile(r'\*\*(.*?)\*\*')
+        self.italic_pattern = re.compile(r'\*((?!\*).+?)\*|_(.+?)_')
+        self.code_pattern = re.compile(r'`(.*?)`')
+        self.link_pattern = re.compile(r'\[(.*?)\]\((.+?)\)')
+        self.strikethrough_pattern = re.compile(r'~~(.*?)~~')
         # 添加匹配星号标记的正则表达式
         self.list_star_pattern = re.compile(r'^\* (.+)$')
         self.header_pattern = re.compile(r'^(\*+) (.+?)(\*+)$')
-        # 添加HTML颜色标签的正则表达式
-        self.html_color_pattern = re.compile(r'<span\s+style=["\']color:\s*([^;"\']+)[;"\'](.*?)>(.*?)</span>', re.IGNORECASE)
+        
+        # 添加HTML颜色标签的正则表达式 - 更精确的版本
+        self.html_color_pattern = re.compile(
+            r'<span\s+style=["\']color:\s*([^;"\']+)[;"\'](.*?)>(.*?)</span>', 
+            re.DOTALL | re.IGNORECASE
+        )
+        
         # 引用组ID，用于跟踪连续的引用
         self.current_quote_group = 0
-        
+
     def reset(self):
         self.segments = []
         self.current_section = None  # 当前处理的段落类型
@@ -733,6 +740,106 @@ class MarkdownParser:
             )
             return [TextSegment(text=text, style=style)]
         
+        # 处理带序号的列表项
+        number_match = re.match(r'^(\d+)\.\s+(.+)$', text)
+        if number_match:
+            number = number_match.group(1)
+            content = number_match.group(2)
+            
+            # 检查是否包含HTML颜色标签
+            if self.html_color_pattern.search(content):
+                # 准备收集所有颜色段落
+                text_parts = []
+                last_end = 0
+                
+                # 处理所有颜色标签
+                for match in self.html_color_pattern.finditer(content):
+                    # 添加标签前的文本
+                    if match.start() > last_end:
+                        before_text = content[last_end:match.start()]
+                        if before_text.strip():
+                            processed_text, format_styles = self.process_inline_formats(before_text)
+                            text_parts.append((processed_text, None, format_styles))
+                    
+                    # 提取颜色值和文本内容
+                    color_value = match.group(1).strip()
+                    color_content = match.group(3).strip()
+                    processed_content, format_styles = self.process_inline_formats(color_content)
+                    text_parts.append((processed_content, color_value, format_styles))
+                    last_end = match.end()
+                
+                # 添加最后一段文本
+                if last_end < len(content):
+                    remaining_text = content[last_end:]
+                    if remaining_text.strip():
+                        processed_text, format_styles = self.process_inline_formats(remaining_text)
+                        text_parts.append((processed_text, None, format_styles))
+                
+                # 合并所有文本部分
+                if text_parts:
+                    # 创建基础样式
+                    base_style = TextStyle(
+                        font_name='bold',
+                        indent=0,
+                        line_spacing=15,
+                        is_list_item=True,
+                        is_bold=True
+                    )
+                    
+                    # 合并所有文本
+                    combined_text = f"{number}. "
+                    for text_part, _, _ in text_parts:
+                        combined_text += text_part
+                    
+                    # 创建包含所有部分的主段落
+                    result_segment = TextSegment(text=combined_text, style=base_style)
+                    
+                    # 构建原始片段
+                    original_segments = []
+                    
+                    # 添加序号作为第一个片段
+                    number_style = TextStyle(
+                        font_name='bold',
+                        line_spacing=15,
+                        is_bold=True,
+                        is_list_item=True
+                    )
+                    original_segments.append(TextSegment(
+                        text=f"{number}. ",
+                        style=number_style
+                    ))
+                    
+                    # 添加每个颜色部分
+                    for text_part, color_value, format_styles in text_parts:
+                        part_style = TextStyle(
+                            font_name='bold' if format_styles['is_bold'] else 'regular',
+                            line_spacing=15,
+                            text_color=color_value,
+                            is_bold=format_styles['is_bold'],
+                            is_italic=format_styles['is_italic'],
+                            is_list_item=True
+                        )
+                        original_segments.append(TextSegment(
+                            text=text_part,
+                            style=part_style
+                        ))
+                    
+                    # 将原始段落附加到结果段落
+                    result_segment.original_segments = original_segments
+                    
+                    return [result_segment]
+            
+            # 如果不包含颜色标签，按普通方式处理
+            processed_content, format_styles = self.process_inline_formats(content)
+            style = TextStyle(
+                font_name='bold',
+                indent=0,
+                line_spacing=15,
+                is_list_item=True,
+                is_bold=True
+            )
+            return [TextSegment(text=f"{number}. {processed_content}", style=style)]
+
         # 处理一级标题 - 确保去除#符号
         if text.strip().startswith('# '):
             title_text = text[2:].strip()
@@ -1109,6 +1216,93 @@ class MarkdownParser:
         # 处理带序号的新闻条目
         number, content = self.split_number_and_content(text)
         if number:
+            # 检查内容是否包含HTML颜色标签
+            if self.html_color_pattern.search(content):
+                color_segments = []
+                last_end = 0
+                
+                # 准备收集所有颜色段落
+                text_parts = []
+                
+                # 处理所有颜色标签
+                for match in self.html_color_pattern.finditer(content):
+                    # 添加标签前的文本
+                    if match.start() > last_end:
+                        before_text = content[last_end:match.start()]
+                        if before_text.strip():
+                            processed_text, format_styles = self.process_inline_formats(before_text)
+                            text_parts.append((processed_text, None, format_styles))
+                    
+                    # 提取颜色值和文本内容
+                    color_value = match.group(1).strip()
+                    colored_content = match.group(3).strip()
+                    processed_content, format_styles = self.process_inline_formats(colored_content)
+                    text_parts.append((processed_content, color_value, format_styles))
+                    last_end = match.end()
+                
+                # 添加最后一段文本
+                if last_end < len(content):
+                    remaining_text = content[last_end:]
+                    if remaining_text.strip():
+                        processed_text, format_styles = self.process_inline_formats(remaining_text)
+                        text_parts.append((processed_text, None, format_styles))
+                
+                # 创建一个带有序号的合并段落
+                if text_parts:
+                    # 合并所有文本为一个段落
+                    combined_text = ""
+                    for text_part, _, _ in text_parts:
+                        combined_text += text_part
+                    
+                    # 基础样式
+                    base_style = TextStyle(
+                        font_name='bold',
+                        indent=0,
+                        line_spacing=15,
+                        is_list_item=True,
+                    )
+                    
+                    # 创建最终段落，包含序号
+                    combined_text_with_number = f"{number}. {combined_text}"
+                    result_segment = TextSegment(text=combined_text_with_number, style=base_style)
+                    
+                    # 创建原始段落信息
+                    original_segments = []
+                    
+                    # 添加序号作为第一个段落
+                    number_style = TextStyle(
+                        font_name='bold',
+                        indent=0,
+                        line_spacing=15,
+                        is_bold=True,
+                        is_list_item=True
+                    )
+                    original_segments.append(TextSegment(
+                        text=f"{number}. ",
+                        style=number_style
+                    ))
+                    
+                    # 添加每个颜色部分
+                    for text_part, color_value, format_styles in text_parts:
+                        part_style = TextStyle(
+                            font_name='bold' if format_styles['is_bold'] else 'regular',
+                            indent=0,
+                            line_spacing=15,
+                            text_color=color_value,
+                            is_bold=format_styles['is_bold'],
+                            is_italic=format_styles['is_italic'],
+                            is_list_item=True
+                        )
+                        original_segments.append(TextSegment(
+                            text=text_part,
+                            style=part_style
+                        ))
+                    
+                    # 将原始段落附加到结果
+                    result_segment.original_segments = original_segments
+                    return [result_segment]
+            
+            # 如果没有颜色标签，使用原来的逻辑处理
             content = self.process_title_marks(content)
             title, body = self.split_title_and_content(content)
             segments = []
@@ -1177,11 +1371,14 @@ class TextRenderer:
 
     def measure_text(self, text: str, font: ImageFont.FreeTypeFont,
                      emoji_font: Optional[ImageFont.FreeTypeFont] = None) -> Tuple[int, int]:
-        """测量文本尺寸，考虑emoji"""
+        """测量文本尺寸，考虑emoji和HTML标签"""
+        # 移除HTML标签，只测量实际可见文本
+        text_without_tags = re.sub(r'<[^>]*?>', '', text)
+        
         total_width = 0
         max_height = 0
 
-        for char in text:
+        for char in text_without_tags:
             if emoji.is_emoji(char) and emoji_font:
                 bbox = self.temp_draw.textbbox((0, 0), char, font=emoji_font)
                 width = bbox[2] - bbox[0]
@@ -1568,6 +1765,227 @@ class TextRenderer:
 
         return processed_lines
 
+    def wrap_text(self, text: str, font: ImageFont.FreeTypeFont, emoji_font: ImageFont.FreeTypeFont, available_width: int) -> List[str]:
+        """将文本换行为适合宽度的多行，保持HTML标签完整性"""
+        if not text:
+            return ['']
+        
+        # 检查是否是列表项
+        is_list_item = False
+        list_prefix = ""
+        list_content = text
+        
+        # 检查数字列表和其他列表类型
+        match = re.match(r'^(\d+\.\s+)(.+)$', text)
+        if match:
+            is_list_item = True
+            list_prefix = match.group(1)
+            list_content = match.group(2)
+            
+            # 缩短前缀宽度，考虑到缩进
+            prefix_width, _ = self.measure_text(list_prefix, font, emoji_font)
+            # 减少可用宽度，但确保至少有300像素
+            available_width = max(300, available_width - prefix_width)
+        else:
+            # 检查无序列表
+            match = re.match(r'^([•●◦○※·]\s+)(.+)$', text)
+            if match:
+                is_list_item = True
+                list_prefix = match.group(1)
+                list_content = match.group(2)
+                
+                # 计算列表前缀的宽度
+                prefix_width, _ = self.measure_text(list_prefix, font, emoji_font)
+                # 减少可用宽度，但确保至少有300像素
+                available_width = max(300, available_width - prefix_width)
+        
+        # 预处理：将所有HTML标签替换为特殊标记，避免在标签内部分词
+        html_tags = []
+        
+        def replace_tag(match):
+            tag = match.group(0)
+            placeholder = f"__HTML_TAG_{len(html_tags)}__"
+            html_tags.append(tag)
+            return placeholder
+        
+        # 更精确的颜色标签匹配模式
+        color_tag_pattern = re.compile(r'<span\s+style=["\']color:\s*[^;"\']+[;"\'](.*?)>.*?</span>', re.DOTALL | re.IGNORECASE)
+        
+        # 替换所有HTML标签为占位符
+        processed_content = re.sub(color_tag_pattern, replace_tag, list_content)
+        
+        # 分词处理，使用更智能的分词策略
+        words = []
+        current_word = ''
+        
+        # 特殊处理中文、英文、标点和emoji
+        for char in processed_content:
+            if emoji.is_emoji(char):
+                # Emoji作为单独词处理
+                if current_word:
+                    words.append(current_word)
+                    current_word = ''
+                words.append(char)
+            elif char in [' ', '\t', '\n', '，', '。', '！', '？', '；', '：', '、']:
+                # 空格和标点作为分隔符
+                if current_word:
+                    words.append(current_word)
+                words.append(char)
+                current_word = ''
+            elif '__HTML_TAG_' in current_word:
+                # 如果当前单词包含占位符，添加并重新开始
+                words.append(current_word)
+                current_word = char
+            elif ord(char) > 0x4E00 and ord(char) < 0x9FFF:
+                # 中文字符单独处理
+                if current_word:
+                    words.append(current_word)
+                    current_word = ''
+                words.append(char)
+            else:
+                # 其他字符（主要是英文和数字）累积为单词
+                current_word += char
+        
+        if current_word:
+            words.append(current_word)
+        
+        # 过滤空词
+        words = [w for w in words if w.strip() or '__HTML_TAG_' in w]
+        
+        # 恢复HTML标签
+        for i, word in enumerate(words):
+            for j, tag in enumerate(html_tags):
+                if f"__HTML_TAG_{j}__" in word:
+                    words[i] = word.replace(f"__HTML_TAG_{j}__", tag)
+        
+        # 换行处理
+        lines = []
+        current_line = ''
+        
+        for i, word in enumerate(words):
+            # 处理换行符
+            if word == '\n':
+                if is_list_item and not lines:
+                    lines.append(list_prefix + current_line)
+                else:
+                    lines.append(current_line)
+                current_line = ''
+                continue
+            
+            # 检查是否包含HTML标签
+            contains_tag = '<span' in word and '</span>' in word
+            
+            # 获取实际文本内容（不含标签）
+            text_without_tags = re.sub(r'<[^>]*?>', '', word)
+            
+            # 测量单词宽度
+            word_width, _ = self.measure_text(text_without_tags, font, emoji_font)
+            
+            # HTML标签内容可能很长，给它更多空间
+            if contains_tag:
+                word_width += 10  # 稍微增加宽度，确保标签完整显示
+            
+            # 测试行宽度
+            test_line = current_line + word
+            test_line_without_tags = re.sub(r'<[^>]*?>', '', test_line)
+            line_width, _ = self.measure_text(test_line_without_tags, font, emoji_font)
+            
+            # 判断是否需要换行
+            if line_width <= available_width:
+                # 宽度足够，继续当前行
+                current_line = test_line
+            else:
+                # 需要换行
+                if current_line:
+                    # 添加当前行到结果
+                    if is_list_item and not lines:
+                        lines.append(list_prefix + current_line)
+                        is_list_item = False  # 只有第一行添加前缀
+                    else:
+                        lines.append(current_line)
+                    current_line = word
+                else:
+                    # 单词本身超过行宽度
+                    if contains_tag:
+                        # 处理超长的带标签单词，尝试按字符分割但保持标签完整
+                        tag_match = re.match(r'(<span[^>]*>)(.*?)(</span>)', word)
+                        if tag_match:
+                            open_tag = tag_match.group(1)
+                            content = tag_match.group(2)
+                            close_tag = tag_match.group(3)
+                            
+                            # 尝试按字符分割内容
+                            chars = list(content)
+                            current_chunk = ''
+                            
+                            for char in chars:
+                                test_chunk = current_chunk + char
+                                chunk_width, _ = self.measure_text(test_chunk, font, emoji_font)
+                                
+                                if chunk_width <= available_width - 60:  # 预留标签空间
+                                    current_chunk = test_chunk
+                                else:
+                                    # 将当前块添加为一行
+                                    if current_chunk:
+                                        full_tag = open_tag + current_chunk + close_tag
+                                        if is_list_item and not lines:
+                                            lines.append(list_prefix + full_tag)
+                                            is_list_item = False
+                                        else:
+                                            lines.append(full_tag)
+                                    current_chunk = char
+                            
+                            # 添加最后一块
+                            if current_chunk:
+                                full_tag = open_tag + current_chunk + close_tag
+                                current_line = full_tag
+                            else:
+                                current_line = ''
+                        else:
+                            # 无法解析标签，作为一整行添加
+                            if is_list_item and not lines:
+                                lines.append(list_prefix + word)
+                                is_list_item = False
+                            else:
+                                lines.append(word)
+                    else:
+                        # 普通长单词，按字符分割
+                        char_line = ''
+                        for char in word:
+                            test_char = char_line + char
+                            char_width, _ = self.measure_text(test_char, font, emoji_font)
+                            
+                            if char_width <= available_width:
+                                char_line = test_char
+                            else:
+                                if char_line:
+                                    if is_list_item and not lines:
+                                        lines.append(list_prefix + char_line)
+                                        is_list_item = False
+                                    else:
+                                        lines.append(char_line)
+                                char_line = char
+                        
+                        # 添加最后部分
+                        if char_line:
+                            current_line = char_line
+        
+        # 添加最后一行
+        if current_line:
+            if is_list_item and not lines:
+                lines.append(list_prefix + current_line)
+            else:
+                lines.append(current_line)
+        
+        # 如果没有任何行，返回空字符串或前缀
+        if not lines:
+            if is_list_item:
+                return [list_prefix]
+            else:
+                return ['']
+        
+        return lines
+
 
 def compress_image(image_path: str, output_path: str, max_size: int = 3145728):  # 3MB in bytes
     """
@@ -1615,6 +2033,84 @@ def preprocess_text(input_text: str) -> Tuple[Optional[str], str]:
         Tuple[Optional[str], str]: (logo_url, content_text)
         logo_url可能为None，content_text为处理后的文本内容
     """
+    # 处理HTML标签中的转义字符，确保所有标签都能被正确解析
+    
+    # 统一处理HTML标签中的各种可能的转义情况
+    def clean_html_tags(text):
+        # 使用正则表达式查找所有<span>标签
+        span_pattern = re.compile(r'<span\s+[^>]*?style=[\\"]?[^>]*?>[^<]*?</span>', re.DOTALL | re.IGNORECASE)
+        
+        def clean_tag(match):
+            tag = match.group(0)
+            # 替换所有转义的引号
+            tag = tag.replace('\\"', '"').replace("\\'", "'")
+            
+            # 提取style属性，确保格式统一
+            style_match = re.search(r'style\s*=\s*["\']([^"\']*)["\']', tag)
+            if style_match:
+                style_content = style_match.group(1)
+                
+                # 提取color属性，规范化颜色格式
+                color_match = re.search(r'color\s*:\s*([^;"\'\s]+)', style_content)
+                if color_match:
+                    color_value = color_match.group(1).strip()
+                    
+                    # 规范化颜色值格式
+                    if not color_value.startswith('#') and not re.match(r'^[a-zA-Z]+$', color_value):
+                        color_value = '#' + color_value  # 添加井号
+                    
+                    # 构建新的标签，确保格式统一
+                    new_style = f'color: {color_value}'
+                    new_tag = f'<span style="{new_style}">'
+                    
+                    # 提取内容
+                    content_match = re.search(r'>(.*?)</span>', tag)
+                    if content_match:
+                        content = content_match.group(1)
+                        new_tag += content + '</span>'
+                        return new_tag
+            
+            return tag
+        
+        # 应用标签清理
+        cleaned_text = span_pattern.sub(clean_tag, text)
+        
+        # 修复可能的标签嵌套错误
+        open_tags = []
+        result = []
+        i = 0
+        while i < len(cleaned_text):
+            # 查找开始标签
+            if cleaned_text[i:i+5] == '<span':
+                tag_end = cleaned_text.find('>', i)
+                if tag_end != -1:
+                    open_tag = cleaned_text[i:tag_end+1]
+                    open_tags.append(open_tag)
+                    result.append(open_tag)
+                    i = tag_end + 1
+                    continue
+            
+            # 查找结束标签
+            if cleaned_text[i:i+7] == '</span>':
+                if open_tags:
+                    open_tags.pop()  # 弹出最近的开始标签
+                result.append('</span>')
+                i += 7
+                continue
+            
+            # 普通字符
+            result.append(cleaned_text[i])
+            i += 1
+        
+        # 处理未闭合的标签
+        for _ in open_tags:
+            result.append('</span>')
+        
+        return ''.join(result)
+    
+    # 应用HTML标签清理
+    input_text = clean_html_tags(input_text)
+    
     # 首先检查是否包含|LOGO|分隔符（大写）
     logo_url = None
     content_text = input_text

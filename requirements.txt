@@ -7,10 +7,10 @@ itsdangerous>=2.1.2
 click>=8.1.6
 
 # 图像处理
-Pillow>=10.0.0
+Pillow>=9.0.0
 
 # emoji 支持
-emoji>=2.8.0
+emoji>=2.0.0
 
 # 正则表达式
 regex>=2023.10.3
@@ -22,10 +22,17 @@ python-dateutil>=2.8.2
 typing-extensions>=4.8.0
 
 # 其他常用库
-requests>=2.31.0
+requests>=2.25.0
 python-dotenv>=1.0.0
 gunicorn>=20.1.0
 
 # 新增依赖
 flask-limiter
 apscheduler
+
+# 新增依赖
+markdown>=3.3.0
+beautifulsoup4>=4.9.0
+fastapi>=0.68.0
+uvicorn>=0.15.0
+python-multipart>=0.0.5
