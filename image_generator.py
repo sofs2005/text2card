@@ -6,18 +6,20 @@ Advanced image card generator with markdown and emoji support
 import math
 import random
 import os
+import io
+from io import BytesIO  # 显式导入BytesIO
+import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import emoji
 import re
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict
 from datetime import datetime
-import requests
-from io import BytesIO
 import time
 from PIL import UnidentifiedImageError
 import json
 import html
+import gc
 
 # 导入配置
 try:
@@ -28,6 +30,194 @@ except ImportError:
         SIGNATURE_TEXT = "—飞天"
     config = DummyConfig()
 
+# 使用国内CDN替代jsdelivr
+# 按优先级排序的CDN列表
+EMOJI_CDN_URLS = [
+    # 国内CDN源
+    "https://npm.elemecdn.com/twemoji@latest/assets/72x72/",  # 饿了么CDN (国内较快)
+    "https://cdn.bootcdn.net/ajax/libs/twemoji/14.0.2/assets/72x72/",  # BootCDN (国内较快)
+    "https://lib.baomitu.com/twemoji/latest/assets/72x72/",  # 360 前端静态资源库
+    # 国际CDN源 (作为备选)
+    "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/",  # jsDelivr
+    "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/assets/72x72/"  # Cloudflare
+]
+
+# 全局变量记录可用的CDN
+working_cdn_url = None
+emoji_image_cache = {}
+
+def codepoint_to_twemoji(codepoint):
+    """将Unicode码点转换为Twemoji文件名格式"""
+    if '-' in codepoint:
+        # 处理多个码点的情况
+        return '-'.join([cp.lower() for cp in codepoint.split('-')])
+    else:
+        return codepoint.lower()
+
+def get_emoji_codepoint(emoji_char):
+    """获取emoji的Unicode码点，格式化为Twemoji URL所需格式"""
+    if len(emoji_char) == 1:
+        # 单个码点
+        return format(ord(emoji_char), 'x')
+    else:
+        # 复合emoji (如表情+肤色修饰符)
+        return '-'.join([format(ord(c), 'x') for c in emoji_char])
+
+def get_twemoji_image(emoji_char: str, size: int = 30) -> Optional[Image.Image]:
+    """从多个CDN源获取emoji图片"""
+    global working_cdn_url
+    cache_key = f"{emoji_char}_{size}"
+    if cache_key in emoji_image_cache:
+        return emoji_image_cache[cache_key].copy()
+        
+    try:
+        # 获取emoji的Unicode码点
+        codepoint = get_emoji_codepoint(emoji_char)
+        twemoji_codepoint = codepoint_to_twemoji(codepoint)
+        
+        # 依次尝试所有CDN直到成功
+        cdn_urls = EMOJI_CDN_URLS.copy()
+        
+        # 如果已知有工作的CDN，优先使用
+        if working_cdn_url and working_cdn_url in cdn_urls:
+            cdn_urls.remove(working_cdn_url)
+            cdn_urls.insert(0, working_cdn_url)
+        
+        success = False
+        for cdn_url in cdn_urls:
+            # 构建URL (Twemoji使用.png文件)
+            url = f"{cdn_url}{twemoji_codepoint}.png"
+            
+            try:
+                # 尝试获取图片，设置更长的超时时间
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    # 创建图像对象
+                    img = Image.open(io.BytesIO(response.content))
+                    # 确保转换为RGBA模式 - 修复透明度问题
+                    if img.mode != 'RGBA':
+                        img = img.convert('RGBA')
+                    # 调整大小
+                    img = img.resize((size, size))
+                    # 存入缓存
+                    emoji_image_cache[cache_key] = img.copy()
+                    # 记录有效的CDN
+                    working_cdn_url = cdn_url
+                    print(f"成功获取Twemoji: {emoji_char} (URL: {url})")
+                    success = True
+                    return img
+            except Exception as e:
+                print(f"从 {cdn_url} 获取emoji失败: {e}")
+                continue
+        
+        if not success:
+            # 所有CDN都失败，尝试处理多码点emoji
+            if len(emoji_char) > 1:
+                # 有些复合emoji可能使用不同的文件命名约定
+                alt_codepoint = format(ord(emoji_char[0]), 'x')
+                
+                for cdn_url in cdn_urls:
+                    alt_url = f"{cdn_url}{alt_codepoint}.png"
+                    try:
+                        alt_response = requests.get(alt_url, timeout=5)
+                        if alt_response.status_code == 200:
+                            img = Image.open(io.BytesIO(alt_response.content))
+                            if img.mode != 'RGBA':
+                                img = img.convert('RGBA')
+                            img = img.resize((size, size))
+                            emoji_image_cache[cache_key] = img.copy()
+                            working_cdn_url = cdn_url
+                            print(f"成功获取替代Twemoji: {emoji_char} (URL: {alt_url})")
+                            return img
+                    except Exception:
+                        continue
+            
+            print(f"所有CDN获取emoji失败: {emoji_char}")
+            return None
+    except Exception as e:
+        print(f"下载Twemoji出错: {e}")
+        return None
+
+def get_local_emoji_image(emoji_char: str, size: int = 30) -> Optional[Image.Image]:
+    """从本地缓存获取emoji图片，如果没有则从CDN下载"""
+    try:
+        # 获取emoji的Unicode码点
+        codepoint = get_emoji_codepoint(emoji_char)
+        
+        # 本地emoji图片路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        emoji_dir = os.path.join(current_dir, "emoji_images")
+        
+        # 如果目录不存在，创建它
+        if not os.path.exists(emoji_dir):
+            os.makedirs(emoji_dir)
+            
+        emoji_path = os.path.join(emoji_dir, f"{codepoint}.png")
+        
+        # 如果本地存在图片，直接返回
+        if os.path.exists(emoji_path):
+            try:
+                img = Image.open(emoji_path)
+                # 确保转换为RGBA模式 - 修复透明度问题
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                img = img.resize((size, size))
+                return img
+            except Exception as e:
+                print(f"读取本地emoji图片失败: {e}，尝试重新下载")
+                # 如果本地图片损坏，尝试重新下载
+                os.remove(emoji_path)
+            
+        # 如果本地没有，尝试下载并保存
+        img = get_twemoji_image(emoji_char, size)
+        if img:
+            # 确保图像是RGBA模式
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            try:
+                img.save(emoji_path)
+            except Exception as e:
+                print(f"保存emoji图片到本地失败: {e}")
+            return img
+            
+        return None
+    except Exception as e:
+        print(f"获取本地emoji图片失败: {e}")
+        return None
+
+# 尝试创建带有文本的emoji图片（作为最后的备选方案）
+def create_text_emoji(emoji_char: str, size: int = 30) -> Optional[Image.Image]:
+    """创建文本版emoji图片（当无法从网络获取时）"""
+    try:
+        # 创建透明背景图像
+        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # 使用默认字体
+        font_size = size - 10  # 稍微小一点避免被裁剪
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        font_path = os.path.join(current_dir, "msyh.ttc")
+        
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except Exception:
+            # 如果无法加载字体，使用默认字体
+            font = ImageFont.load_default()
+        
+        # 计算文本位置使其居中
+        bbox = draw.textbbox((0, 0), emoji_char, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = (size - text_width) // 2
+        y = (size - text_height) // 2
+        
+        # 绘制emoji文本
+        draw.text((x, y), emoji_char, font=font, fill=(0, 0, 0, 255))
+        
+        return img
+    except Exception as e:
+        print(f"创建文本emoji失败: {e}")
+        return None
 
 @dataclass
 class TextStyle:
@@ -70,6 +260,11 @@ class FontManager:
         self.fonts = {}
         self.font_paths = font_paths
         self._initialize_fonts()
+        
+        # 打印字体文件路径用于调试
+        print(f"正在加载emoji字体: {self.font_paths.get('emoji', '未指定')}")
+        if 'emoji' in self.font_paths:
+            print(f"字体文件存在: {os.path.exists(self.font_paths['emoji'])}")
 
     def _initialize_fonts(self):
         """初始化基础字体"""
@@ -77,8 +272,15 @@ class FontManager:
         for size in sizes:
             self.fonts[f'regular_{size}'] = ImageFont.truetype(self.font_paths['regular'], size)
             self.fonts[f'bold_{size}'] = ImageFont.truetype(self.font_paths['bold'], size)
-        # emoji字体
-        self.fonts['emoji_30'] = ImageFont.truetype(self.font_paths['emoji'], 30)
+        # emoji字体 - 现在使用Noto Sans字体
+        try:
+            self.fonts['emoji_30'] = ImageFont.truetype(self.font_paths['emoji'], 30)
+            print("Emoji字体加载成功")
+        except Exception as e:
+            print(f"Emoji字体加载失败: {e}")
+            # 尝试使用常规字体作为备用
+            self.fonts['emoji_30'] = self.fonts['regular_30']
+            print("使用常规字体作为emoji备用")
 
     def get_font(self, style: TextStyle) -> ImageFont.FreeTypeFont:
         """获取对应样式的字体"""
@@ -287,65 +489,34 @@ def round_corner_image(image: Image.Image, radius: int) -> Image.Image:
 
 
 def add_title_image(background: Image.Image, title_image_path: str, rect_x: int, rect_y: int, rect_width: int) -> int:
-    """添加标题图片
-    
-    Args:
-        background: 背景图片
-        title_image_path: 图片路径或URL
-        rect_x: 矩形x坐标
-        rect_y: 矩形y坐标
-        rect_width: 矩形宽度
-        
-    Returns:
-        int: 图片底部位置加上间距
-    """
+    """添加标题图片"""
     try:
-        # 判断是否为URL
-        if title_image_path.startswith(('http://', 'https://')):
-            # 从URL下载图像，增加超时时间和重试次数
-            title_img = download_image_with_timeout(title_image_path, timeout=15, max_retries=5)
-            if title_img is None:
-                print(f"无法加载标题图像: {title_image_path}")
-                return rect_y + 30
-        else:
-            # 从本地文件加载
-            try:
-                title_img = Image.open(title_image_path)
-            except (FileNotFoundError, IOError) as e:
-                print(f"无法加载本地图像: {e}")
-                return rect_y + 30
-        
-        # 如果图片不是RGBA模式，转换为RGBA
-        if title_img.mode != 'RGBA':
-            title_img = title_img.convert('RGBA')
+        with Image.open(title_image_path) as title_img:
+            # 如果图片不是RGBA模式，转换为RGBA
+            if title_img.mode != 'RGBA':
+                title_img = title_img.convert('RGBA')
 
-        # 设置图片宽度等于文字区域宽度
-        target_width = rect_width - 40  # 左右各留20像素边距
+            # 设置图片宽度等于文字区域宽度
+            target_width = rect_width - 40  # 左右各留20像素边距
 
-        # 计算等比例缩放后的高度
-        aspect_ratio = title_img.height / title_img.width
-        target_height = int(target_width * aspect_ratio)
-        
-        # 限制最大高度（不超过卡片宽度的一半）
-        max_height = rect_width // 2
-        if target_height > max_height:
-            target_height = max_height
-            target_width = int(max_height / aspect_ratio)
+            # 计算等比例缩放后的高度
+            aspect_ratio = title_img.height / title_img.width
+            target_height = int(target_width * aspect_ratio)
 
-        # 调整图片大小
-        resized_img = title_img.resize((int(target_width), target_height), Image.Resampling.LANCZOS)
+            # 调整图片大小
+            resized_img = title_img.resize((int(target_width), target_height), Image.Resampling.LANCZOS)
 
-        # 添加圆角
-        rounded_img = round_corner_image(resized_img, radius=20)  # 可以调整圆角半径
+            # 添加圆角
+            rounded_img = round_corner_image(resized_img, radius=20)  # 可以调整圆角半径
 
-        # 计算居中位置
-        x = rect_x + (rect_width - target_width) // 2  # 水平居中
-        y = rect_y + 20  # 顶部边距20像素
+            # 计算居中位置（水平方向）
+            x = rect_x + 20  # 左边距20像素
+            y = rect_y + 20  # 顶部边距20像素
 
-        # 粘贴图片（使用图片自身的alpha通道）
-        background.paste(rounded_img, (x, y), rounded_img)
+            # 粘贴图片（使用图片自身的alpha通道）
+            background.paste(rounded_img, (x, y), rounded_img)
 
-        return y + target_height + 20  # 返回图片底部位置加上20像素间距
+            return y + target_height + 20  # 返回图片底部位置加上20像素间距
     except Exception as e:
         print(f"Error loading title image: {e}")
         return rect_y + 30
@@ -772,6 +943,13 @@ class TextRenderer:
                     fill=quote_bg_color
                 )
 
+        # 获取背景图像对象
+        background = None
+        for obj in [o for o in gc.get_objects() if isinstance(o, Image.Image)]:
+            if obj.mode in ('RGBA', 'RGB') and obj.width > 100:
+                background = obj
+                break
+
         # 改进列表项渲染
         if style and style.is_list_item and text.startswith(('•', '-', '+')):
             # 提取列表标记和内容
@@ -789,10 +967,34 @@ class TextRenderer:
             # 绘制内容，缩进10像素
             for char in content:
                 if emoji.is_emoji(char):
-                    # 使用emoji字体
-                    bbox = draw.textbbox((x + marker_width + 10, y), char, font=emoji_font)
-                    draw.text((x + marker_width + 10, y), char, font=emoji_font, fill=fill)
-                    char_width = bbox[2] - bbox[0]
+                    # 尝试使用Twemoji图片
+                    if background:
+                        emoji_img = get_local_emoji_image(char, size=style.font_size)
+                        if emoji_img:
+                            # 确保图像是RGBA模式
+                            if emoji_img.mode != 'RGBA':
+                                emoji_img = emoji_img.convert('RGBA')
+                                
+                            emoji_y = y + (style.font_size - emoji_img.height) // 2
+                            
+                            # 安全粘贴emoji图片
+                            try:
+                                background.paste(emoji_img, (x, emoji_y), emoji_img)
+                            except ValueError as e:
+                                print(f"粘贴emoji图片失败: {e}, 尝试不使用透明度掩码")
+                                background.paste(emoji_img, (x, emoji_y))  # 不使用透明度掩码
+                            
+                            char_width = emoji_img.width
+                        else:
+                            # 如果图片获取失败，使用普通文本
+                            bbox = draw.textbbox((x + marker_width + 10, y), char, font=emoji_font)
+                            draw.text((x + marker_width + 10, y), char, font=emoji_font, fill=fill)
+                            char_width = bbox[2] - bbox[0]
+                    else:
+                        # 如果没有背景，使用普通文本
+                        bbox = draw.textbbox((x + marker_width + 10, y), char, font=emoji_font)
+                        draw.text((x + marker_width + 10, y), char, font=emoji_font, fill=fill)
+                        char_width = bbox[2] - bbox[0]
                 else:
                     # 使用常规字体
                     bbox = draw.textbbox((x + marker_width + 10, y), char, font=font)
@@ -809,19 +1011,48 @@ class TextRenderer:
         # 常规文本绘制
         for char in text:
             if emoji.is_emoji(char):
-                # 使用emoji字体
-                bbox = draw.textbbox((x, y), char, font=emoji_font)
-                draw.text((x, y), char, font=emoji_font, fill=fill, embedded_color=True)
-                char_width = bbox[2] - bbox[0]
+                # 尝试使用Twemoji图片
+                if background:
+                    emoji_img = get_local_emoji_image(char, size=font.size)
+                    
+                    # 如果无法获取图片，尝试创建文本版emoji
+                    if emoji_img is None:
+                        emoji_img = create_text_emoji(char, size=font.size)
+                    
+                    if emoji_img:
+                        # 确保图像是RGBA模式
+                        if emoji_img.mode != 'RGBA':
+                            emoji_img = emoji_img.convert('RGBA')
+                        
+                        emoji_y = y + (font.size - emoji_img.height) // 2
+                        
+                        # 安全粘贴emoji图片
+                        try:
+                            background.paste(emoji_img, (x, emoji_y), emoji_img)
+                        except ValueError as e:
+                            print(f"粘贴emoji图片失败: {e}, 尝试不使用透明度掩码")
+                            background.paste(emoji_img, (x, emoji_y))  # 不使用透明度掩码
+                        
+                        char_width = emoji_img.width
+                    else:
+                        # 如果图片获取失败，使用普通文本
+                        bbox = draw.textbbox((x, y), char, font=emoji_font)
+                        draw.text((x, y), char, font=emoji_font, fill=fill)
+                        char_width = bbox[2] - bbox[0]
+                else:
+                    # 如果没有背景，使用普通文本
+                    bbox = draw.textbbox((x, y), char, font=emoji_font)
+                    draw.text((x, y), char, font=emoji_font, fill=fill)
+                    char_width = bbox[2] - bbox[0]
             else:
                 # 使用常规字体
                 bbox = draw.textbbox((x, y), char, font=font)
                 draw.text((x, y), char, font=font, fill=fill)
                 char_width = bbox[2] - bbox[0]
-
+            
             x += char_width
             total_width += char_width
-
+        
         return total_width
 
     def calculate_height(self, processed_lines: List[ProcessedLine]) -> int:
@@ -988,109 +1219,69 @@ def compress_image(image_path: str, output_path: str, max_size: int = 3145728): 
 
 
 def preprocess_text(input_text: str) -> Tuple[Optional[str], str]:
-    """预处理输入文本，解析JSON并提取可用的文本内容
-    
-    Args:
-        input_text: 输入文本，可能是JSON格式或普通文本
-        
-    Returns:
-        Tuple[Optional[str], str]: (logo_url, content_text)
-        logo_url可能为None，content_text为处理后的文本内容
     """
-    # 首先检查是否包含|LOGO|分隔符（大写）
-    logo_url = None
-    content_text = input_text
+    预处理输入文本，提取logo URL和内容文本
     
-    if "|LOGO|" in input_text:
-        parts = input_text.split("|LOGO|", 1)
-        if len(parts) == 2:
-            logo_url = parts[0].strip()
-            content_text = parts[1].strip()
-            
-            # 如果剩余内容为空，使用默认文本
-            if not content_text:
-                content_text = "图片卡片"
-    
-    # 如果没有使用分隔符，则检查文本内容开头是否为图片URL
-    elif content_text:
-        url_pattern = r'^(https?://\S+\.(jpg|jpeg|png|gif|webp))(.*)$'
-        match = re.match(url_pattern, content_text, re.IGNORECASE | re.DOTALL)
-        
-        if match:
-            # 如果消息内容以图片URL开头，则将其作为logo
-            logo_url = match.group(1)
-            remaining_text = match.group(3).strip()
-            
-            # 如果剩余内容为空，使用默认文本
-            if not remaining_text:
-                remaining_text = "图片卡片"
-                
-            # 更新内容
-            content_text = remaining_text
-    
-    # 处理转义字符
-    # 1. 处理文本中的转义序列
-    content_text = content_text.replace('\\n', '\n')
-    content_text = content_text.replace('\\t', '\t')
-    content_text = content_text.replace('\\r', '\r')
-    
-    # 2. 处理特殊的文本标记
-    content_text = content_text.replace('!~!', '\n')
-    
+    返回:
+        Tuple[Optional[str], str]: (logo URL或None, 内容文本)
+    """
     # 尝试解析为JSON
     try:
-        # 检查是否是JSON格式
-        if content_text.strip().startswith('{') and content_text.strip().endswith('}'):
-            data = json.loads(content_text)
-            result_text = ""
+        # 检查是否为JSON格式
+        if input_text.strip().startswith('{') and input_text.strip().endswith('}'):
+            data = json.loads(input_text)
             
-            # 提取"result"字段
-            if "result" in data:
-                result_content = data["result"]
-                # 处理转义的换行符
-                result_content = result_content.replace('\\n', '\n')
-                result_text += result_content + "\n\n"
+            # 提取logo和内容
+            logo_url = data.get('logo')
+            content_text = data.get('content', '')
             
-            # 提取"text"字段
-            if "text" in data:
-                text_content = data["text"]
-                # 处理转义的换行符
-                text_content = text_content.replace('\\n', '\n')
-                # 去除HTML标签
-                text_content = re.sub(r'<[^>]+>', '', text_content)
-                # 处理HTML实体
-                text_content = html.unescape(text_content)
-                result_text += text_content
+            # 替换HTML实体
+            content_text = html.unescape(content_text)
             
-            # 处理特殊标记
-            result_text = result_text.replace('!~!', '\n')
-            
-            return logo_url, result_text
-    except (json.JSONDecodeError, AttributeError, TypeError):
+            return logo_url, content_text
+    except:
         # 如果不是有效的JSON或解析出错，返回原始文本
         pass
     
-    return logo_url, content_text
+    return None, input_text
 
 
 def generate_image(text: str, output_path: str, title_image: Optional[str] = None):
     """生成图片主函数 - 修复彩色emoji渲染"""
     try:
-        # 预处理输入文本 - 只处理文本内容，不处理logo
-        _, text = preprocess_text(text)
+        # 预处理输入文本 - 处理logo和内容
+        logo_url, text = preprocess_text(text)
+        
+        # 如果传入的title_image为None但从文本中解析出logo_url，则使用logo_url
+        if title_image is None and logo_url:
+            title_image = logo_url
         
         width = 720
         current_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # 打印当前目录用于调试
+        print(f"当前目录: {current_dir}")
+        print(f"当前目录文件列表: {[f for f in os.listdir(current_dir) if f.endswith(('.ttf', '.ttc'))]}")
+        
+        # 仍然使用现有的字体路径
         font_paths = {
             'regular': os.path.join(current_dir, "msyh.ttc"),
             'bold': os.path.join(current_dir, "msyhbd.ttc"),
-            'emoji': os.path.join(current_dir, "TwitterColorEmoji.ttf")  # 或其他彩色emoji字体
+            'emoji': os.path.join(current_dir, "msyh.ttc")  # 使用默认字体作为emoji字体
         }
 
         # 验证字体文件
         for font_type, path in font_paths.items():
             if not os.path.exists(path):
+                print(f"字体文件不存在: {path}")
                 raise FileNotFoundError(f"Font file not found: {path}")
+                
+        # 检查Pillow版本
+        try:
+            from PIL import __version__ as pillow_version
+            print(f"Pillow版本: {pillow_version}")
+        except Exception as e:
+            print(f"检查Pillow版本失败: {e}")
 
         # 获取主题颜色 - 在解析文本前获取，用于传递给TextStyle
         background_color, text_color, is_dark_theme = get_theme_colors()
@@ -1102,10 +1293,29 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
         parser = MarkdownParser()
         renderer = TextRenderer(font_manager, max_content_width)
 
-        # 如果有标题图片，在文本前添加分隔符
+        # 处理logo/title图片
         if title_image:
-            # 添加一个空行作为分隔
-            text = "\n\n" + text
+            try:
+                # 检查是否为URL
+                if isinstance(title_image, str) and title_image.startswith(('http://', 'https://')):
+                    # 下载图片
+                    title_img = download_image_with_timeout(title_image)
+                    if title_img is None:
+                        print(f"无法下载logo图片: {title_image}")
+                        # 添加一个空行作为分隔
+                        text = "\n\n" + text
+                    else:
+                        # 如果成功下载，使用临时文件
+                        temp_logo_path = os.path.join(current_dir, "temp_logo.png")
+                        title_img.save(temp_logo_path)
+                        title_image = temp_logo_path
+                        # 添加一个空行作为分隔
+                        text = "\n\n" + text
+                # 本地文件路径处理保持不变
+            except Exception as e:
+                print(f"处理logo图片时出错: {e}")
+                # 添加一个空行作为分隔
+                text = "\n\n" + text
         
         # 解析文本
         segments = parser.parse(text)
@@ -1226,12 +1436,37 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
                 current_x = x
                 for char in line.text:
                     if emoji.is_emoji(char):
-                        # emoji字体渲染
-                        emoji_font = font_manager.fonts['emoji_30']
-                        bbox = draw.textbbox((current_x, current_y), char, font=emoji_font)
-                        # 使用RGBA模式绘制emoji
-                        draw.text((current_x, current_y), char, font=emoji_font, embedded_color=True)
-                        current_x += bbox[2] - bbox[0]
+                        # 使用Twemoji图片渲染emoji
+                        emoji_size = line.style.font_size
+                        emoji_img = get_local_emoji_image(char, size=emoji_size)
+                        
+                        # 如果无法获取图片，尝试创建文本版emoji
+                        if emoji_img is None:
+                            emoji_img = create_text_emoji(char, size=emoji_size)
+                            
+                        if emoji_img:
+                            # 确保图像是RGBA模式
+                            if emoji_img.mode != 'RGBA':
+                                emoji_img = emoji_img.convert('RGBA')
+                                
+                            # 计算垂直居中位置
+                            emoji_y = current_y + (emoji_size - emoji_img.height) // 2
+                            
+                            # 安全粘贴emoji图片
+                            try:
+                                background.paste(emoji_img, (current_x, emoji_y), emoji_img)
+                            except ValueError as e:
+                                print(f"粘贴emoji图片失败: {e}, 尝试不使用透明度掩码")
+                                background.paste(emoji_img, (current_x, emoji_y))  # 不使用透明度掩码
+                            
+                            # 更新位置
+                            current_x += emoji_img.width
+                        else:
+                            # 如果获取图片失败，使用普通文本
+                            emoji_font = font_manager.fonts['emoji_30']
+                            bbox = draw.textbbox((current_x, current_y), char, font=emoji_font)
+                            draw.text((current_x, current_y), char, font=emoji_font, fill=text_color)
+                            current_x += bbox[2] - bbox[0]
                     else:
                         # 普通文字渲染
                         font = font_manager.get_font(line.style)
@@ -1245,8 +1480,20 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
                 current_y += line.height
 
         # 直接保存为PNG，保持RGBA模式
-        background = background.convert('RGB')
-        background.save(output_path, "PNG", optimize=False, compress_level=0)
+        try:
+            # 测试RGBA模式保存
+            background.save(output_path, "PNG", optimize=False, compress_level=0)
+            print(f"已保存图片(RGBA): {output_path}")
+        except Exception as e:
+            print(f"RGBA保存失败: {e}")
+            try:
+                # 备用方案：转换为RGB模式再保存
+                background = background.convert('RGB')
+                background.save(output_path, "PNG", optimize=False, compress_level=0)
+                print(f"已保存图片(RGB): {output_path}")
+            except Exception as e2:
+                print(f"RGB保存也失败: {e2}")
+                raise
 
     except Exception as e:
         print(f"Error generating image: {e}")
@@ -1271,7 +1518,7 @@ def download_image_with_timeout(url: str, timeout: int = 10, max_retries: int = 
             response = requests.get(url, timeout=timeout, stream=True)
             if response.status_code == 200:
                 try:
-                    return Image.open(BytesIO(response.content))
+                    return Image.open(BytesIO(response.content))  # 使用正确导入的BytesIO
                 except UnidentifiedImageError:
                     print(f"URL内容不是有效的图像: {url}")
                     return None

@@ -39,6 +39,10 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import gc
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import sys
+import argparse
+import importlib
+import threading
 
 # 导入配置
 from config import config
@@ -533,7 +537,82 @@ def internal_server_error(error):
         500
     ))
 
+def watch_files_for_changes(watched_files=None, check_interval=1, exclude_patterns=None):
+    """
+    监控Python文件变化并在变化时重新加载应用
+    
+    Args:
+        watched_files: 要监控的文件列表，如果为None则监控所有py文件
+        check_interval: 检查间隔时间（秒）
+        exclude_patterns: 要排除的文件匹配模式列表
+    """
+    if watched_files is None:
+        # 默认监控当前目录下所有.py文件
+        watched_files = [f for f in os.listdir('.') if f.endswith('.py')]
+    
+    if exclude_patterns is None:
+        exclude_patterns = ['__pycache__', '.git', '.venv', 'venv']
+    
+    # 记录文件最后修改时间
+    file_mtimes = {}
+    for file_path in watched_files:
+        try:
+            file_mtimes[file_path] = os.path.getmtime(file_path)
+        except OSError:
+            file_mtimes[file_path] = 0
+    
+    logging.info(f"文件监控已启动，监控文件: {', '.join(watched_files)}")
+    
+    def check_files():
+        while True:
+            # 检查文件是否有变化
+            for file_path in watched_files:
+                try:
+                    mtime = os.path.getmtime(file_path)
+                    if mtime > file_mtimes[file_path]:
+                        logging.info(f"检测到文件变化: {file_path}")
+                        file_mtimes[file_path] = mtime
+                        
+                        # 重新加载已导入的模块
+                        module_name = os.path.splitext(file_path)[0]
+                        if module_name in sys.modules:
+                            try:
+                                importlib.reload(sys.modules[module_name])
+                                logging.info(f"已重新加载模块: {module_name}")
+                            except Exception as e:
+                                logging.error(f"重新加载模块时出错: {e}")
+                        
+                        # 告知用户需要重启服务以应用所有更改
+                        logging.warning("某些更改可能需要手动重启服务才能完全生效")
+                except OSError:
+                    continue
+            
+            time.sleep(check_interval)
+    
+    # 在后台线程中运行文件监控
+    monitor_thread = threading.Thread(target=check_files, daemon=True)
+    monitor_thread.start()
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Text2Card API 服务')
+    parser.add_argument('--host', default='0.0.0.0', help='监听主机 (默认: 0.0.0.0)')
+    parser.add_argument('--port', type=int, default=3000, help='监听端口 (默认: 3000)')
+    parser.add_argument('--debug', action='store_true', help='启用调试模式')
+    parser.add_argument('--watch', action='store_true', help='监控文件变化并自动重载')
+    args = parser.parse_args()
+    
+    # 配置日志
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG, format=log_format)
+    else:
+        logging.basicConfig(level=logging.INFO, format=log_format)
+    
+    # 启动文件监控（如果启用）
+    if args.watch:
+        py_files = [f for f in os.listdir('.') if f.endswith('.py')]
+        watch_files_for_changes(py_files)
+    
     # 启动前清理旧文件
     cleanup_old_images()
 
@@ -544,8 +623,4 @@ if __name__ == "__main__":
     logger.info(f"Maximum content length: {config.MAX_CONTENT_LENGTH} bytes")
 
     # 启动服务器
-    app.run(
-        debug=False,
-        port=config.PORT,
-        host='0.0.0.0'  # 默认监听所有网络接口
-    )
+    app.run(host=args.host, port=args.port)
