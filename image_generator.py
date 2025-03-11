@@ -305,100 +305,90 @@ def get_gradient_styles() -> List[Dict[str, tuple]]:
     获取精心设计的背景渐变样式
     """
     return [
-
-        # Mac 高级白
+        # 现代简约系列 - 增强对比度
         {
-            "start_color": (246, 246, 248),  # 珍珠白
-            "end_color": (250, 250, 252)  # 云雾白
+            "start_color": (235, 245, 255),  # 浅蓝白
+            "end_color": (210, 225, 245)  # 淡蓝灰
         },
         {
-            "start_color": (245, 245, 247),  # 奶白色
-            "end_color": (248, 248, 250)  # 象牙白
+            "start_color": (235, 232, 250),  # 淡紫白
+            "end_color": (210, 205, 235)  # 柔和紫灰
         },
-        # macOS Monterey 风格
+        
+        # 清新活力系列 - 更明显的渐变
         {
-            "start_color": (191, 203, 255),  # 淡蓝紫
-            "end_color": (255, 203, 237)  # 浅粉红
-        },
-        {
-            "start_color": (168, 225, 255),  # 天空蓝
-            "end_color": (203, 255, 242)  # 清新薄荷
-        },
-
-        # 优雅渐变系列
-        {
-            "start_color": (255, 209, 209),  # 珊瑚粉
-            "end_color": (243, 209, 255)  # 淡紫色
+            "start_color": (180, 220, 255),  # 明亮蓝
+            "end_color": (230, 240, 255)  # 淡蓝白
         },
         {
-            "start_color": (255, 230, 209),  # 奶橘色
-            "end_color": (255, 209, 247)  # 粉紫色
+            "start_color": (220, 240, 255),  # 清新天蓝
+            "end_color": (255, 230, 220)  # 温暖橘粉
         },
-
-        # 清新通透
+        
+        # 精致渐变系列 - 提高色彩饱和度
         {
-            "start_color": (213, 255, 219),  # 嫩绿色
-            "end_color": (209, 247, 255)  # 浅蓝色
-        },
-        {
-            "start_color": (255, 236, 209),  # 杏橘色
-            "end_color": (255, 209, 216)  # 浅玫瑰
-        },
-
-        # 高级灰调
-        {
-            "start_color": (237, 240, 245),  # 珍珠灰
-            "end_color": (245, 237, 245)  # 薰衣草灰
+            "start_color": (255, 230, 230),  # 柔和粉红
+            "end_color": (230, 230, 255)  # 淡雅紫蓝
         },
         {
-            "start_color": (240, 245, 255),  # 云雾蓝
-            "end_color": (245, 240, 245)  # 淡紫灰
+            "start_color": (230, 255, 240),  # 清新薄荷
+            "end_color": (240, 230, 255)  # 淡紫丁香
         },
-
-        # 梦幻糖果色
+        
+        # 自然色彩系列 - 更加鲜明
         {
-            "start_color": (255, 223, 242),  # 棉花糖粉
-            "end_color": (242, 223, 255)  # 淡紫丁香
-        },
-        {
-            "start_color": (223, 255, 247),  # 薄荷绿
-            "end_color": (223, 242, 255)  # 天空蓝
-        },
-
-        # 高饱和度系列
-        {
-            "start_color": (255, 192, 203),  # 粉红色
-            "end_color": (192, 203, 255)  # 淡紫蓝
+            "start_color": (220, 245, 220),  # 清新草绿
+            "end_color": (250, 245, 220)  # 温暖米色
         },
         {
-            "start_color": (192, 255, 238),  # 碧绿色
-            "end_color": (238, 192, 255)  # 淡紫色
+            "start_color": (230, 255, 230),  # 明亮嫩绿
+            "end_color": (230, 230, 255)  # 淡雅蓝紫
         },
-
-        # 静谧系列
+        
+        # 高级质感系列 - 增强反差
         {
-            "start_color": (230, 240, 255),  # 宁静蓝
-            "end_color": (255, 240, 245)  # 柔粉色
-        },
-        {
-            "start_color": (245, 240, 255),  # 淡紫色
-            "end_color": (240, 255, 240)  # 清新绿
-        },
-
-        # 温柔渐变
-        {
-            "start_color": (255, 235, 235),  # 温柔粉
-            "end_color": (235, 235, 255)  # 淡雅紫
+            "start_color": (235, 225, 245),  # 高级紫灰
+            "end_color": (245, 235, 225)  # 温暖米色
         },
         {
-            "start_color": (235, 255, 235),  # 嫩芽绿
-            "end_color": (255, 235, 245)  # 浅粉红
+            "start_color": (225, 235, 250),  # 高级蓝灰
+            "end_color": (250, 235, 240)  # 淡粉灰
+        },
+        
+        # 专业商务系列 - 更有力度
+        {
+            "start_color": (210, 230, 255),  # 商务蓝
+            "end_color": (250, 250, 255)  # 纯净白蓝
+        },
+        {
+            "start_color": (225, 225, 235),  # 高级灰
+            "end_color": (245, 245, 255)  # 淡雅蓝白
+        },
+        
+        # 轻松愉悦系列 - 视觉冲击更强
+        {
+            "start_color": (255, 235, 205),  # 明亮米色
+            "end_color": (205, 235, 255)  # 清爽蓝色
+        },
+        {
+            "start_color": (225, 255, 240),  # 薄荷绿
+            "end_color": (255, 225, 215)  # 暖橘粉
+        },
+        
+        # 科技感系列 - 更加鲜明
+        {
+            "start_color": (200, 225, 255),  # 科技蓝
+            "end_color": (225, 200, 255)  # 科技紫
+        },
+        {
+            "start_color": (200, 245, 235),  # 高级青绿
+            "end_color": (235, 235, 255)  # 淡雅紫白
         }
     ]
 
 
 def create_gradient_background(width: int, height: int) -> Image.Image:
-    """创建渐变背景 - 从左上到右下的对角线渐变"""
+    """创建渐变背景 - 从左上到右下的对角线渐变，增强效果"""
     gradient_styles = get_gradient_styles()
     style = random.choice(gradient_styles)
     start_color = style["start_color"]
@@ -408,17 +398,26 @@ def create_gradient_background(width: int, height: int) -> Image.Image:
     base = Image.new('RGB', (width, height))
     draw = ImageDraw.Draw(base)
 
-    # 计算渐变
+    # 计算渐变 - 使用指数曲线增强渐变效果
     for y in range(height):
         for x in range(width):
             # 计算当前位置到左上角的相对距离 (对角线渐变)
-            # 使用 position 在 0 到 1 之间表示渐变程度
-            position = (x + y) / (width + height)
+            # 使用非线性渐变使效果更加明显
+            raw_position = (x + y) / (width + height)
+            
+            # 使用幂函数调整渐变曲线，增强对比
+            # pow(raw_position, 0.85) 使渐变在整体上略微倾向于起始色
+            position = pow(raw_position, 0.85)  
 
-            # 为每个颜色通道计算渐变值
+            # 为每个颜色通道计算渐变值，并增加轻微的通道差异以提高视觉效果
             r = int(start_color[0] * (1 - position) + end_color[0] * position)
-            g = int(start_color[1] * (1 - position) + end_color[1] * position)
-            b = int(start_color[2] * (1 - position) + end_color[2] * position)
+            g = int(start_color[1] * (1 - position * 1.05) + end_color[1] * position * 1.05)  # 轻微调整绿色通道
+            b = int(start_color[2] * (1 - position * 0.95) + end_color[2] * position * 0.95)  # 轻微调整蓝色通道
+            
+            # 确保值在合法范围内
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
 
             # 绘制像素
             draw.point((x, y), fill=(r, g, b))
@@ -432,16 +431,16 @@ def get_theme_colors() -> Tuple[tuple, str, bool]:
     current_minute = datetime.now().minute
 
     if (current_hour == 8 and current_minute >= 30) or (9 <= current_hour < 19):
-        use_dark = random.random() < 0.1
+        use_dark = random.random() < 0.15  # 略微增加深色主题出现概率
     else:
         use_dark = True
 
     if use_dark:
-        # 深色毛玻璃效果: 深色半透明背景(50%透明度) + 白色文字
-        return ((50, 50, 50, 128), "#FFFFFF", True)  # alpha值调整为128实现50%透明度
+        # 深色毛玻璃效果: 使用更舒适且对比度更高的深色背景 + 明亮文字
+        return ((35, 38, 50, 190), "#FFFFFF", True)  # 深蓝灰色 + 纯白文字，增加透明度
     else:
-        # 浅色毛玻璃效果: 白色半透明背景(50%透明度) + 黑色文字
-        return ((255, 255, 255, 128), "#000000", False)  # alpha值调整为128实现50%透明度
+        # 浅色毛玻璃效果: 纯净白色背景 + 深色文字
+        return ((250, 250, 252, 190), "#2A2A35", False)  # 纯净白 + 深沉灰蓝，增加透明度
 
 
 def create_rounded_rectangle(image: Image.Image, x: int, y: int, w: int, h: int, radius: int, bg_color: tuple):
@@ -1018,7 +1017,7 @@ class TextRenderer:
                     # 如果无法获取图片，尝试创建文本版emoji
                     if emoji_img is None:
                         emoji_img = create_text_emoji(char, size=font.size)
-                    
+                            
                     if emoji_img:
                         # 确保图像是RGBA模式
                         if emoji_img.mode != 'RGBA':
@@ -1035,7 +1034,7 @@ class TextRenderer:
                         
                         char_width = emoji_img.width
                     else:
-                        # 如果图片获取失败，使用普通文本
+                        # 如果获取图片失败，使用普通文本
                         bbox = draw.textbbox((x, y), char, font=emoji_font)
                         draw.text((x, y), char, font=emoji_font, fill=fill)
                         char_width = bbox[2] - bbox[0]

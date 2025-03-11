@@ -27,7 +27,7 @@ Text2Card 是一个小而美的工具，能够将文本内容转换为精美的�
 
 ## 🖼️ 效果图片展示
 以下是使用 Text2Card 生成的图片示例：
-![示例卡片](./assets/example_card.png)
+![示例卡片](./assets/example.jpg)
 
 （注：上图展示了 Text2Card 生成的卡片效果。）
 
