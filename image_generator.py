@@ -234,6 +234,10 @@ class TextStyle:
     alignment: str = 'left'  # 对齐方式
     is_dark_theme: bool = False  # 是否为深色主题
     is_list_item: bool = False  # 是否为列表项
+    is_horizontal_rule: bool = False  # 是否为水平分割线
+    is_task_list: bool = False  # 是否为任务列表
+    task_checked: bool = False  # 任务是否已完成
+    is_ordered_list: bool = False  # 是否为有序列表
 
 
 @dataclass
@@ -731,6 +735,14 @@ class MarkdownParser:
         if not text.strip():
             return [TextSegment(text='', style=TextStyle())]
 
+        # 处理水平分割线: --- 或 ***
+        if re.match(r'^(\-{3,}|\*{3,})$', text.strip()):
+            style = TextStyle(
+                line_spacing=30,  # 分割线前后增加间距
+                is_horizontal_rule=True
+            )
+            return [TextSegment(text='', style=style)]
+
         # 检查是否匹配标题模式: *标题* 或 **标题**
         header_match = re.match(r'^\*+\s*(.+?)\s*\*+$', text)
         if header_match:
@@ -813,6 +825,24 @@ class MarkdownParser:
             )
             return [TextSegment(text=content, style=style)]
 
+        # 处理任务列表项
+        task_match = re.match(r'^(\-|\*|\+)\s+\[([ xX])\]\s+(.+)$', text)
+        if task_match:
+            marker = task_match.group(1)
+            is_checked = task_match.group(2).lower() == 'x'
+            task_content = task_match.group(3).strip()
+            task_content = self.process_inline_formats(task_content)
+            
+            style = TextStyle(
+                font_name='regular',
+                indent=40,
+                line_spacing=15,
+                is_task_list=True,
+                task_checked=is_checked
+            )
+            # 将完整任务项文本传递给渲染器
+            return [TextSegment(text=task_content, style=style)]
+
         # 增强处理无序列表项
         list_match = re.match(r'^(\*|\-|\+)\s+(.+)$', text)
         if list_match:
@@ -823,9 +853,26 @@ class MarkdownParser:
             style = TextStyle(
                 font_name='regular',
                 indent=40,
-                line_spacing=15
+                line_spacing=15,
+                is_list_item=True
             )
             return [TextSegment(text=f"{marker} {list_content}", style=style)]
+
+        # 处理有序列表项 - 增强识别和渲染
+        ordered_list_match = re.match(r'^(\d+)\.[ \t]+(.+)$', text)
+        if ordered_list_match:
+            number = ordered_list_match.group(1)
+            content = ordered_list_match.group(2).strip()
+            content = self.process_inline_formats(content)
+            
+            style = TextStyle(
+                font_name='regular',
+                indent=40,
+                line_spacing=15,
+                is_ordered_list=True
+            )
+            # 保留数字前缀，确保正确渲染
+            return [TextSegment(text=f"{number}. {content}", style=style)]
 
         # 处理带序号的新闻条目
         number, content = self.split_number_and_content(text)
@@ -884,6 +931,53 @@ class TextRenderer:
         self.max_width = max_width
         self.temp_image = Image.new('RGBA', (2000, 100))
         self.temp_draw = ImageDraw.Draw(self.temp_image)
+
+    def draw_horizontal_rule(self, draw: ImageDraw.ImageDraw, rect_x: int, current_y: int, rect_width: int, is_dark_theme: bool = False) -> int:
+        """绘制水平分割线，返回增加的高度"""
+        hr_y = current_y + 10  # 距顶部10像素
+        hr_width = rect_width - 80  # 左右各留40像素边距
+        hr_color = (180, 180, 180, 150) if not is_dark_theme else (100, 100, 100, 150)  # 半透明灰色
+        
+        # 绘制分割线
+        draw.line(
+            [(rect_x + 40, hr_y), (rect_x + hr_width + 40, hr_y)],
+            fill=hr_color,
+            width=2
+        )
+        
+        return 20  # 返回分割线占用的高度
+
+    def draw_task_list_item(self, draw: ImageDraw.ImageDraw, background: Image.Image, pos: Tuple[int, int], 
+                           text: str, font: ImageFont.FreeTypeFont, emoji_font: ImageFont.FreeTypeFont,
+                           fill: str, style: TextStyle) -> int:
+        """绘制任务列表项，返回绘制宽度"""
+        x, y = pos
+        
+        # 绘制复选框
+        box_size = min(20, font.size - 4)  # 复选框大小，略小于字体大小
+        box_y = y + (font.size - box_size) // 2
+        
+        # 绘制方框
+        box_color = (100, 100, 100, 200) if style.is_dark_theme else (80, 80, 80, 200)
+        draw.rectangle(
+            [(x, box_y), (x + box_size, box_y + box_size)],
+            outline=box_color,
+            width=2
+        )
+        
+        # 如果已勾选，绘制勾号
+        if style.task_checked:
+            # 绘制勾号
+            check_color = (50, 200, 100, 220)  # 绿色勾号
+            # 绘制勾号的三个点
+            p1 = (x + box_size * 0.2, box_y + box_size * 0.5)
+            p2 = (x + box_size * 0.4, box_y + box_size * 0.7)
+            p3 = (x + box_size * 0.8, box_y + box_size * 0.3)
+            draw.line([p1, p2, p3], fill=check_color, width=2)
+        
+        # 绘制任务文本，位置在复选框右侧
+        text_x = x + box_size + 10  # 文本距离复选框10像素
+        return self.draw_text_with_emoji(draw, (text_x, y), text, font, emoji_font, fill, style) + box_size + 10
 
     def measure_text(self, text: str, font: ImageFont.FreeTypeFont,
                      emoji_font: Optional[ImageFont.FreeTypeFont] = None) -> Tuple[int, int]:
@@ -1391,6 +1485,12 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
             # 计算文本起始位置
             base_x = rect_x + 40
             
+            # 处理水平分割线
+            if hasattr(line.style, 'is_horizontal_rule') and line.style.is_horizontal_rule:
+                # 绘制水平分割线
+                current_y += renderer.draw_horizontal_rule(draw, rect_x, current_y, rect_width, is_dark_theme)
+                continue
+            
             # 处理对齐方式
             if hasattr(line.style, 'alignment') and line.style.alignment == 'right':
                 # 右对齐：先计算文本宽度
@@ -1428,6 +1528,32 @@ def generate_image(text: str, output_path: str, title_image: Optional[str] = Non
                 # 列表项特殊处理
                 renderer.draw_text_with_emoji(
                     draw, (x, current_y), line.text, 
+                    font, emoji_font, text_color, line.style
+                )
+            elif hasattr(line.style, 'is_task_list') and line.style.is_task_list:
+                # 任务列表特殊处理
+                renderer.draw_task_list_item(
+                    draw, background, (x, current_y), line.text,
+                    font, emoji_font, text_color, line.style
+                )
+            elif hasattr(line.style, 'is_ordered_list') and line.style.is_ordered_list:
+                # 有序列表特殊处理
+                # 从文本中提取序号和内容
+                parts = line.text.split('. ', 1)
+                number = parts[0]
+                content = parts[1] if len(parts) > 1 else ""
+                
+                # 绘制序号，用加粗字体
+                number_font = font_manager.get_font(TextStyle(font_name='bold', font_size=font.size))
+                number_text = f"{number}. "
+                bbox = draw.textbbox((x, current_y), number_text, font=number_font)
+                draw.text((x, current_y), number_text, font=number_font, fill=text_color)
+                number_width = bbox[2] - bbox[0]
+                
+                # 绘制内容
+                content_x = x + number_width + 5  # 内容距离序号5像素
+                renderer.draw_text_with_emoji(
+                    draw, (content_x, current_y), content,
                     font, emoji_font, text_color, line.style
                 )
             else:
